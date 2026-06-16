@@ -1,0 +1,37 @@
+# Environment variables — NEVER commit real keys
+.env
+*.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Debug / dev files
+debug_*.py
+debug_*.txt
+api_dump.txt
+api_info.txt
+weshop_api_info*.txt
+models_list.txt
+*.log
+
+# Database files (leftover artifacts)
+*.db
+*.sqlite
+*.sqlite3
+
+# Test outputs
+test_*.py
+evaluate_*.py
+
+# Build / dist
+dist/
+build/
+*.egg-info/

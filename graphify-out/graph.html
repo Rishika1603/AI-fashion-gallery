@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentKit Graphify — 3D Code Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0A0E13;--bg2:rgba(14,18,23,0.94);
+  --fg:#E6EBF2;--fg2:rgba(230,235,242,0.55);--fg3:rgba(230,235,242,0.3);
+  --green:#6FCF97;--blue:#7AA7FF;--gold:#F2C66D;--amber:#F2A65A;
+  --border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);
+  --font:Inter,-apple-system,system-ui,sans-serif;
+  --mono:'JetBrains Mono','SF Mono',Menlo,monospace;
+}
+html,body{height:100%;background:var(--bg);color:var(--fg);font-family:var(--font);overflow:hidden}
+canvas{display:block}
+#main-canvas{position:fixed;inset:0;width:100%;height:100%;cursor:grab}
+#main-canvas:active{cursor:grabbing}
+
+/* Panels */
+.panel{
+  position:fixed;z-index:10;
+  background:var(--bg2);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid var(--border);border-radius:12px;
+  padding:16px;
+}
+
+/* Top bar */
+#top-bar{
+  top:0;left:0;right:0;border-radius:0;border-left:none;border-right:none;border-top:none;
+  padding:14px 20px;display:flex;align-items:center;justify-content:space-between;
+  background:linear-gradient(180deg,rgba(10,14,19,0.98) 0%,rgba(10,14,19,0.7) 100%);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  transition:opacity 0.3s;
+}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-icon{
+  width:18px;height:18px;border-radius:4px;flex-shrink:0;
+  background:linear-gradient(135deg,#F2C66D,#C58CF0);
+  box-shadow:0 0 0 1px rgba(255,255,255,0.1);
+}
+.logo-name{font-size:13px;font-weight:600;letter-spacing:-0.01em}
+.logo-sep{color:var(--fg3);font-size:13px}
+.logo-sub{font-size:12px;color:var(--fg2);font-family:var(--mono)}
+.top-stats{display:flex;align-items:center;gap:18px;font-size:11px;color:var(--fg2)}
+.top-stat span{color:var(--green)}
+.top-stat span.blue{color:var(--blue)}
+.top-stat span.amber{color:var(--amber)}
+
+/* Left panel */
+#left-panel{
+  top:64px;left:18px;width:230px;
+  display:flex;flex-direction:column;gap:14px;
+  transition:opacity 0.3s;
+}
+.search-wrap{position:relative}
+.search-icon{
+  position:absolute;left:10px;top:50%;transform:translateY(-50%);
+  color:var(--fg2);pointer-events:none;
+}
+#search{
+  width:100%;padding:8px 10px 8px 30px;
+  background:rgba(255,255,255,0.035);
+  border:1px solid var(--border);border-radius:8px;
+  color:var(--fg);font-family:var(--font);font-size:12px;
+  outline:none;transition:border-color 0.15s;
+}
+#search:focus{border-color:var(--border2)}
+.section-label{
+  font-size:10px;text-transform:uppercase;letter-spacing:0.12em;
+  color:var(--fg3);margin-bottom:8px;
+}
+.type-chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{
+  display:flex;align-items:center;gap:5px;
+  padding:4px 9px;border-radius:999px;
+  border:1px solid var(--border2);background:rgba(255,255,255,0.04);
+  color:var(--fg);font-size:11px;font-family:var(--font);
+  cursor:pointer;transition:all 0.15s;
+}
+.chip:hover{background:rgba(255,255,255,0.08)}
+.chip.off{border-color:var(--border);color:var(--fg2);background:transparent}
+.chip-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+
+/* Minimap */
+#minimap-wrap{display:flex;flex-direction:column;gap:6px}
+#mini-canvas{
+  width:120px;height:120px;border-radius:8px;
+  background:rgba(255,255,255,0.02);border:1px solid var(--border);
+}
+.hint-text{font-size:10px;color:var(--fg3);font-family:var(--mono)}
+
+/* Right inspector */
+#inspector{
+  top:0;right:0;bottom:0;width:310px;border-radius:0;
+  border-right:none;border-top:none;border-bottom:none;
+  padding:58px 20px 20px;overflow-y:auto;
+  transform:translateX(100%);transition:transform 0.35s cubic-bezier(0.2,0,0,1);
+}
+#inspector.open{transform:translateX(0)}
+#inspector-close{
+  position:absolute;top:16px;right:16px;
+  width:24px;height:24px;border-radius:6px;border:none;
+  background:rgba(255,255,255,0.05);color:var(--fg2);
+  cursor:pointer;font-size:15px;
+  display:flex;align-items:center;justify-content:center;
+}
+.insp-type{
+  display:flex;align-items:center;gap:8px;margin-bottom:4px;
+  font-size:10px;text-transform:uppercase;letter-spacing:0.12em;color:var(--fg2);
+}
+.insp-dot{width:9px;height:9px;border-radius:50%}
+.insp-name{
+  font-family:var(--mono);font-size:17px;font-weight:500;
+  margin-bottom:4px;word-break:break-all;line-height:1.3;
+}
+.insp-file{
+  font-family:var(--mono);font-size:11px;color:var(--fg2);margin-bottom:20px;
+}
+.insp-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:1px;
+  background:rgba(255,255,255,0.05);border-radius:8px;
+  overflow:hidden;margin-bottom:20px;
+}
+.insp-cell{background:var(--bg);padding:11px 13px}
+.insp-cell-label{font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--fg3)}
+.insp-cell-val{font-size:13px;margin-top:3px;font-family:var(--mono)}
+.neighbors-label{
+  font-size:10px;text-transform:uppercase;letter-spacing:0.12em;
+  color:var(--fg2);margin-bottom:9px;
+}
+.neighbors-list{
+  display:flex;flex-direction:column;gap:1px;
+  background:rgba(255,255,255,0.05);border-radius:8px;overflow:hidden;
+}
+.neighbor-btn{
+  display:flex;align-items:center;gap:9px;
+  padding:9px 11px;background:var(--bg);
+  border:none;cursor:pointer;text-align:left;
+  color:var(--fg);font-family:var(--mono);font-size:12px;
+  transition:background 0.1s;
+}
+.neighbor-btn:hover{background:rgba(255,255,255,0.04)}
+.neighbor-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.neighbor-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.neighbor-deg{color:var(--fg3);font-size:10px}
+.blast-notice{
+  margin-top:20px;padding:10px 12px;
+  background:rgba(242,165,90,0.07);
+  border:1px solid rgba(242,165,90,0.2);border-radius:8px;
+  font-size:11px;color:rgba(242,200,150,0.85);line-height:1.5;
+}
+.blast-notice-title{
+  font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:0.1em;color:var(--amber);margin-bottom:3px;
+}
+.insp-idle{
+  position:absolute;right:22px;top:50%;transform:translateY(-50%);
+  width:200px;text-align:right;
+  transition:opacity 0.3s;
+}
+.insp-idle-label{
+  font-size:10px;text-transform:uppercase;letter-spacing:0.14em;
+  color:var(--fg2);margin-bottom:5px;
+}
+.insp-idle-text{font-size:13px;color:var(--fg2);line-height:1.5}
+
+/* Tooltip */
+#tooltip{
+  position:fixed;pointer-events:none;z-index:50;
+  background:rgba(18,22,28,0.94);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border:1px solid var(--border2);border-radius:9px;
+  padding:9px 11px;min-width:190px;
+  box-shadow:0 8px 28px rgba(0,0,0,0.5);
+  display:none;
+}
+.tt-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.tt-dot{width:8px;height:8px;border-radius:50%}
+.tt-name{font-family:var(--mono);font-weight:500;font-size:12px}
+.tt-info{font-size:11px;color:var(--fg2);line-height:1.5}
+
+/* Controls */
+#controls{
+  position:fixed;bottom:22px;right:18px;z-index:10;
+  display:flex;flex-direction:column;gap:5px;
+}
+.ctrl-btn{
+  padding:7px 13px;border-radius:9px;border:1px solid var(--border2);
+  background:var(--bg2);color:var(--fg);font-size:12px;font-family:var(--font);
+  cursor:pointer;transition:all 0.15s;display:flex;align-items:center;gap:6px;
+  backdrop-filter:blur(14px);
+}
+.ctrl-btn:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.18)}
+.ctrl-btn.on{background:rgba(111,207,151,0.15);border-color:rgba(111,207,151,0.4);color:var(--green)}
+
+/* Vignette */
+#vignette{
+  position:fixed;inset:0;pointer-events:none;z-index:1;
+  background:radial-gradient(ellipse at center,transparent 40%,rgba(0,0,0,0.5) 100%);
+}
+</style>
+</head>
+<body>
+<canvas id="main-canvas"></canvas>
+<div id="vignette"></div>
+
+<!-- Top bar -->
+<div id="top-bar">
+  <div class="logo">
+    <div class="logo-icon"></div>
+    <span class="logo-name">AgentKit</span>
+    <span style="color:#6FCF97;font-size:13px;font-weight:600">Graphify</span>
+    <span class="logo-sep">·</span>
+    <span class="logo-sub">Interactive Code Knowledge Graph</span>
+  </div>
+  <div class="top-stats">
+    <div class="top-stat"><span>189</span> NODES</div>
+    <div class="top-stat"><span class="blue">126</span> EDGES</div>
+    <div class="top-stat"><span>7</span> COMMUNITIES</div>
+    <div class="top-stat"><span class="amber">0</span> GOD NODES</div>
+  </div>
+</div>
+
+<!-- Left panel -->
+<div class="panel" id="left-panel">
+  <div class="search-wrap">
+    <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="search" placeholder="Search nodes… (F)" autocomplete="off">
+  </div>
+  <div>
+    <div class="section-label">Node Types</div>
+    <div class="type-chips" id="type-chips"></div>
+  </div>
+  <div id="minimap-wrap">
+    <canvas id="mini-canvas" width="240" height="240"></canvas>
+    <span class="hint-text">drag · scroll · shift+drag pan</span>
+  </div>
+</div>
+
+<!-- Right inspector -->
+<div class="panel" id="inspector">
+  <button id="inspector-close">×</button>
+  <div id="inspector-content">
+    <div class="insp-idle" id="insp-idle">
+      <div class="insp-idle-label">Inspector</div>
+      <div class="insp-idle-text">Click any node to see its neighborhood, blast radius, and connections.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip">
+  <div class="tt-head">
+    <span class="tt-dot" id="tt-dot"></span>
+    <span class="tt-name" id="tt-name"></span>
+  </div>
+  <div class="tt-info" id="tt-info"></div>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <button class="ctrl-btn on" id="sim-btn" onclick="toggleSim()">⚡ Auto-rotate: ON</button>
+  <button class="ctrl-btn" onclick="focusGods()">⭐ God Nodes</button>
+  <button class="ctrl-btn" onclick="resetView()">↺ Reset View</button>
+</div>
+
+<script>
+const GPU_NODES = [{"id": "backend/chat_service.py", "label": "chat_service", "type": "module", "file": "backend/chat_service.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/database.py", "label": "database", "type": "module", "file": "backend/database.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/database.py:get_db", "label": "get_db", "type": "function", "file": "backend/database.py", "line": 16, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/embeddings.py", "label": "embeddings", "type": "module", "file": "backend/embeddings.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/embeddings.py:get_model_and_processor", "label": "get_model_and_processor", "type": "function", "file": "backend/embeddings.py", "line": 16, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/embeddings.py:get_image_embedding", "label": "get_image_embedding", "type": "function", "file": "backend/embeddings.py", "line": 27, "docstring": "Generates a CLIP embedding for a given image (PIL Image or path).", "godNode": false, "community": "0"}, {"id": "backend/embeddings.py:get_text_embedding", "label": "get_text_embedding", "type": "function", "file": "backend/embeddings.py", "line": 50, "docstring": "Generates a CLIP embedding for a given text.", "godNode": false, "community": "0"}, {"id": "backend/embeddings.py:cosine_similarity", "label": "cosine_similarity", "type": "function", "file": "backend/embeddings.py", "line": 70, "docstring": "Computes cosine similarity between two vectors.", "godNode": false, "community": "0"}, {"id": "backend/embeddings.py:normalize_score", "label": "normalize_score", "type": "function", "file": "backend/embeddings.py", "line": 84, "docstring": "Normalizes a raw CLIP cosine similarity score (typically 0.15 - 0.45 range)\nto a human-friendly percentage (0-100%).", "godNode": false, "community": "0"}, {"id": "backend/evaluate_ragas.py", "label": "evaluate_ragas", "type": "module", "file": "backend/evaluate_ragas.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/ingest_dataset.py", "label": "ingest_dataset", "type": "module", "file": "backend/ingest_dataset.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/ingest_dataset.py:clean_pinecone", "label": "clean_pinecone", "type": "function", "file": "backend/ingest_dataset.py", "line": 29, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/ingest_dataset.py:ingest_data", "label": "ingest_data", "type": "function", "file": "backend/ingest_dataset.py", "line": 34, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/main.py", "label": "main", "type": "module", "file": "backend/main.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/main.py:get_image_url", "label": "get_image_url", "type": "function", "file": "backend/main.py", "line": 118, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/main.py:ChatRequest", "label": "ChatRequest", "type": "class", "file": "backend/main.py", "line": 373, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/main.py:DummyTryOn", "label": "DummyTryOn", "type": "class", "file": "backend/main.py", "line": 103, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/main.py:DummyTryOn.process_tryon", "label": "process_tryon", "type": "method", "file": "backend/main.py", "line": 104, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/main.py:process_tryon", "label": "process_tryon", "type": "function", "file": "backend/main.py", "line": 104, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/models.py", "label": "models", "type": "module", "file": "backend/models.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/models.py:Product", "label": "Product", "type": "class", "file": "backend/models.py", "line": 5, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/models.py:ChatMessage", "label": "ChatMessage", "type": "class", "file": "backend/models.py", "line": 21, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/run_server.py", "label": "run_server", "type": "module", "file": "backend/run_server.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/run_server.py:run", "label": "run", "type": "function", "file": "backend/run_server.py", "line": 7, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py", "label": "schemas", "type": "module", "file": "backend/schemas.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py:ProductSchema", "label": "ProductSchema", "type": "class", "file": "backend/schemas.py", "line": 5, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py:SearchResult", "label": "SearchResult", "type": "class", "file": "backend/schemas.py", "line": 20, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py:PaginatedProducts", "label": "PaginatedProducts", "type": "class", "file": "backend/schemas.py", "line": 25, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py:ChatMessageSchema", "label": "ChatMessageSchema", "type": "class", "file": "backend/schemas.py", "line": 31, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py:ChatRequest", "label": "ChatRequest", "type": "class", "file": "backend/schemas.py", "line": 41, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py:ChatHistoryResponse", "label": "ChatHistoryResponse", "type": "class", "file": "backend/schemas.py", "line": 45, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/schemas.py:Config", "label": "Config", "type": "class", "file": "backend/schemas.py", "line": 17, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/seed.py", "label": "seed", "type": "module", "file": "backend/seed.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/seed.py:seed_data", "label": "seed_data", "type": "function", "file": "backend/seed.py", "line": 13, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/tryon.py", "label": "tryon", "type": "module", "file": "backend/tryon.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/tryon.py:TryOnService", "label": "TryOnService", "type": "class", "file": "backend/tryon.py", "line": 19, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/tryon.py:TryOnService.__init__", "label": "__init__", "type": "method", "file": "backend/tryon.py", "line": 20, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/tryon.py:TryOnService.process_tryon", "label": "process_tryon", "type": "method", "file": "backend/tryon.py", "line": 84, "docstring": "Process the virtual try-on request.\nReturns bytes of the result image.", "godNode": false, "community": "0"}, {"id": "backend/tryon.py:__init__", "label": "__init__", "type": "function", "file": "backend/tryon.py", "line": 20, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/tryon.py:process_tryon", "label": "process_tryon", "type": "function", "file": "backend/tryon.py", "line": 84, "docstring": "Process the virtual try-on request.\nReturns bytes of the result image.", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py", "label": "vector_store", "type": "module", "file": "backend/vector_store.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py:get_client", "label": "get_client", "type": "function", "file": "backend/vector_store.py", "line": 32, "docstring": "", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py:get_index", "label": "get_index", "type": "function", "file": "backend/vector_store.py", "line": 45, "docstring": "Returns the Pinecone index, creating it if it doesn't exist.", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py:upsert_vectors", "label": "upsert_vectors", "type": "function", "file": "backend/vector_store.py", "line": 78, "docstring": "Upserts a list of vectors to Pinecone.\nvectors: List of (id, embedding, metadata) tuples.", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py:query_vectors", "label": "query_vectors", "type": "function", "file": "backend/vector_store.py", "line": 100, "docstring": "Queries Pinecone for the most similar vectors.", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py:fetch_vectors", "label": "fetch_vectors", "type": "function", "file": "backend/vector_store.py", "line": 136, "docstring": "Fetches vectors by ID.\nReturns a dictionary of id -> vector data.", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py:get_index_stats", "label": "get_index_stats", "type": "function", "file": "backend/vector_store.py", "line": 154, "docstring": "Returns index statistics such as total vector count.", "godNode": false, "community": "0"}, {"id": "backend/vector_store.py:delete_index", "label": "delete_index", "type": "function", "file": "backend/vector_store.py", "line": 168, "docstring": "Deletes the Pinecone index.", "godNode": false, "community": "0"}, {"id": "backend/__init__.py", "label": "__init__", "type": "module", "file": "backend/__init__.py", "line": 1, "docstring": "", "godNode": false, "community": "0"}, {"id": "frontend (6)/eslint.config.js", "label": "eslint.config", "type": "module", "file": "frontend (6)/eslint.config.js", "line": 1, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/postcss.config.js", "label": "postcss.config", "type": "module", "file": "frontend (6)/postcss.config.js", "line": 1, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/tailwind.config.js", "label": "tailwind.config", "type": "module", "file": "frontend (6)/tailwind.config.js", "line": 1, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/vite.config.ts", "label": "vite.config", "type": "module", "file": "frontend (6)/vite.config.ts", "line": 1, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/src/api.ts", "label": "api", "type": "module", "file": "frontend (6)/src/api.ts", "line": 1, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/api.ts:chatWithBot", "label": "chatWithBot", "type": "function", "file": "frontend (6)/src/api.ts", "line": 41, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/types.ts", "label": "types", "type": "module", "file": "frontend (6)/src/types.ts", "line": 1, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/types.ts:Product", "label": "Product", "type": "interface", "file": "frontend (6)/src/types.ts", "line": 1, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/types.ts:SearchResult", "label": "SearchResult", "type": "interface", "file": "frontend (6)/src/types.ts", "line": 14, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/types.ts:PaginatedResponse", "label": "PaginatedResponse", "type": "interface", "file": "frontend (6)/src/types.ts", "line": 20, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/types.ts:ScreenState", "label": "ScreenState", "type": "class", "file": "frontend (6)/src/types.ts", "line": 27, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/App.tsx", "label": "App", "type": "module", "file": "frontend (6)/src/App.tsx", "line": 1, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/App.tsx:App", "label": "App", "type": "function", "file": "frontend (6)/src/App.tsx", "line": 10, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/App.tsx:handleStartSearch", "label": "handleStartSearch", "type": "function", "file": "frontend (6)/src/App.tsx", "line": 16, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/App.tsx:handleSearch", "label": "handleSearch", "type": "function", "file": "frontend (6)/src/App.tsx", "line": 20, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/main.tsx", "label": "main", "type": "module", "file": "frontend (6)/src/main.tsx", "line": 1, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/components/ChatBot.tsx", "label": "ChatBot", "type": "module", "file": "frontend (6)/src/components/ChatBot.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ChatBot.tsx:scrollToBottom", "label": "scrollToBottom", "type": "function", "file": "frontend (6)/src/components/ChatBot.tsx", "line": 29, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ChatBot.tsx:handleSend", "label": "handleSend", "type": "function", "file": "frontend (6)/src/components/ChatBot.tsx", "line": 37, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ChatBot.tsx:handleLinkClick", "label": "handleLinkClick", "type": "function", "file": "frontend (6)/src/components/ChatBot.tsx", "line": 74, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ChatBot.tsx:handleTryOnRequest", "label": "handleTryOnRequest", "type": "function", "file": "frontend (6)/src/components/ChatBot.tsx", "line": 93, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ChatBot.tsx:Message", "label": "Message", "type": "interface", "file": "frontend (6)/src/components/ChatBot.tsx", "line": 10, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ChatBot.tsx:ChatBot", "label": "ChatBot", "type": "component", "file": "frontend (6)/src/components/ChatBot.tsx", "line": 16, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ErrorBoundary.tsx", "label": "ErrorBoundary", "type": "module", "file": "frontend (6)/src/components/ErrorBoundary.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ErrorBoundary.tsx:componentDidCatch", "label": "componentDidCatch", "type": "method", "file": "frontend (6)/src/components/ErrorBoundary.tsx", "line": 21, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ErrorBoundary.tsx:render", "label": "render", "type": "method", "file": "frontend (6)/src/components/ErrorBoundary.tsx", "line": 25, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ErrorBoundary.tsx:Props", "label": "Props", "type": "interface", "file": "frontend (6)/src/components/ErrorBoundary.tsx", "line": 3, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ErrorBoundary.tsx:State", "label": "State", "type": "interface", "file": "frontend (6)/src/components/ErrorBoundary.tsx", "line": 7, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Gallery.tsx", "label": "Gallery", "type": "module", "file": "frontend (6)/src/components/Gallery.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Gallery.tsx:fetchProductsData", "label": "fetchProductsData", "type": "function", "file": "frontend (6)/src/components/Gallery.tsx", "line": 48, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Gallery.tsx:handleLoadMore", "label": "handleLoadMore", "type": "function", "file": "frontend (6)/src/components/Gallery.tsx", "line": 74, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Gallery.tsx:GalleryProps", "label": "GalleryProps", "type": "interface", "file": "frontend (6)/src/components/Gallery.tsx", "line": 10, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Gallery.tsx:FilterOption", "label": "FilterOption", "type": "interface", "file": "frontend (6)/src/components/Gallery.tsx", "line": 14, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Gallery.tsx:FILTERS", "label": "FILTERS", "type": "component", "file": "frontend (6)/src/components/Gallery.tsx", "line": 19, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Gallery.tsx:Gallery", "label": "Gallery", "type": "component", "file": "frontend (6)/src/components/Gallery.tsx", "line": 40, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ProductCard.tsx", "label": "ProductCard", "type": "module", "file": "frontend (6)/src/components/ProductCard.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ProductCard.tsx:handleTryOnRequest", "label": "handleTryOnRequest", "type": "function", "file": "frontend (6)/src/components/ProductCard.tsx", "line": 21, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ProductCard.tsx:ProductCardProps", "label": "ProductCardProps", "type": "interface", "file": "frontend (6)/src/components/ProductCard.tsx", "line": 9, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ProductCard.tsx:ProductCard", "label": "ProductCard", "type": "component", "file": "frontend (6)/src/components/ProductCard.tsx", "line": 16, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ProductDetailModal.tsx", "label": "ProductDetailModal", "type": "module", "file": "frontend (6)/src/components/ProductDetailModal.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ProductDetailModal.tsx:ProductDetailModalProps", "label": "ProductDetailModalProps", "type": "interface", "file": "frontend (6)/src/components/ProductDetailModal.tsx", "line": 6, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/ProductDetailModal.tsx:ProductDetailModal", "label": "ProductDetailModal", "type": "component", "file": "frontend (6)/src/components/ProductDetailModal.tsx", "line": 13, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Results.tsx", "label": "Results", "type": "module", "file": "frontend (6)/src/components/Results.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Results.tsx:ResultsProps", "label": "ResultsProps", "type": "interface", "file": "frontend (6)/src/components/Results.tsx", "line": 6, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/Results.tsx:Results", "label": "Results", "type": "component", "file": "frontend (6)/src/components/Results.tsx", "line": 12, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx", "label": "SearchOverlay", "type": "module", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:handlePaste", "label": "handlePaste", "type": "function", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 22, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:handleKeyDown", "label": "handleKeyDown", "type": "function", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 31, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:handleDrag", "label": "handleDrag", "type": "function", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 37, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:handleDrop", "label": "handleDrop", "type": "function", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 47, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:handleFile", "label": "handleFile", "type": "function", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 56, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:handleFileInput", "label": "handleFileInput", "type": "function", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 71, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:onButtonClick", "label": "onButtonClick", "type": "function", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 77, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:SearchOverlayProps", "label": "SearchOverlayProps", "type": "interface", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 7, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/SearchOverlay.tsx:SearchOverlay", "label": "SearchOverlay", "type": "component", "file": "frontend (6)/src/components/SearchOverlay.tsx", "line": 13, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/TryOnModal.tsx", "label": "TryOnModal", "type": "module", "file": "frontend (6)/src/components/TryOnModal.tsx", "line": 1, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/TryOnModal.tsx:handleTryOn", "label": "handleTryOn", "type": "function", "file": "frontend (6)/src/components/TryOnModal.tsx", "line": 38, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/TryOnModal.tsx:handleReset", "label": "handleReset", "type": "function", "file": "frontend (6)/src/components/TryOnModal.tsx", "line": 55, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/TryOnModal.tsx:TryOnModalProps", "label": "TryOnModalProps", "type": "interface", "file": "frontend (6)/src/components/TryOnModal.tsx", "line": 5, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/src/components/TryOnModal.tsx:TryOnModal", "label": "TryOnModal", "type": "component", "file": "frontend (6)/src/components/TryOnModal.tsx", "line": 12, "docstring": "", "godNode": false, "community": "3"}, {"id": "frontend (6)/index.html", "label": "index", "type": "module", "file": "frontend (6)/index.html", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "graphify-out/graph.html", "label": "graph", "type": "module", "file": "graphify-out/graph.html", "line": 0, "docstring": "", "godNode": false, "community": "4"}, {"id": "frontend (6)/src/index.css", "label": "index", "type": "module", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:googleapis", "label": "googleapis", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:com", "label": "com", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:f8fafc", "label": "f8fafc", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:premium-blur", "label": "premium-blur", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:glass-card", "label": "glass-card", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:btn-primary", "label": "btn-primary", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:text-gradient", "label": "text-gradient", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:animate-gradient-x", "label": "animate-gradient-x", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/src/index.css:animate-float", "label": "animate-float", "type": "class", "file": "frontend (6)/src/index.css", "line": 0, "docstring": "", "godNode": false, "community": "2"}, {"id": "frontend (6)/manifest.json", "label": "manifest", "type": "config", "file": "frontend (6)/manifest.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/manifest.json:animations", "label": "animations", "type": "key", "file": "frontend (6)/manifest.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/manifest.json:author", "label": "author", "type": "key", "file": "frontend (6)/manifest.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/manifest.json:description", "label": "description", "type": "key", "file": "frontend (6)/manifest.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/manifest.json:generator", "label": "generator", "type": "key", "file": "frontend (6)/manifest.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/manifest.json:keywords", "label": "keywords", "type": "key", "file": "frontend (6)/manifest.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/manifest.json:version", "label": "version", "type": "key", "file": "frontend (6)/manifest.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package-lock.json", "label": "package-lock", "type": "config", "file": "frontend (6)/package-lock.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package-lock.json:name", "label": "name", "type": "key", "file": "frontend (6)/package-lock.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package-lock.json:version", "label": "version", "type": "key", "file": "frontend (6)/package-lock.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package-lock.json:lockfileVersion", "label": "lockfileVersion", "type": "key", "file": "frontend (6)/package-lock.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package-lock.json:requires", "label": "requires", "type": "key", "file": "frontend (6)/package-lock.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package-lock.json:packages", "label": "packages", "type": "key", "file": "frontend (6)/package-lock.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json", "label": "package", "type": "config", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json:name", "label": "name", "type": "key", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json:private", "label": "private", "type": "key", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json:version", "label": "version", "type": "key", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json:type", "label": "type", "type": "key", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json:scripts", "label": "scripts", "type": "key", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json:dependencies", "label": "dependencies", "type": "key", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/package.json:devDependencies", "label": "devDependencies", "type": "key", "file": "frontend (6)/package.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/tsconfig.app.json", "label": "tsconfig.app", "type": "config", "file": "frontend (6)/tsconfig.app.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/tsconfig.json", "label": "tsconfig", "type": "config", "file": "frontend (6)/tsconfig.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/tsconfig.json:files", "label": "files", "type": "key", "file": "frontend (6)/tsconfig.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/tsconfig.json:references", "label": "references", "type": "key", "file": "frontend (6)/tsconfig.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "frontend (6)/tsconfig.node.json", "label": "tsconfig.node", "type": "config", "file": "frontend (6)/tsconfig.node.json", "line": 0, "docstring": "", "godNode": false, "community": "1"}, {"id": "graphify-out/graph.json", "label": "graph", "type": "config", "file": "graphify-out/graph.json", "line": 0, "docstring": "", "godNode": false, "community": "4"}, {"id": "graphify-out/graph.json:nodes", "label": "nodes", "type": "key", "file": "graphify-out/graph.json", "line": 0, "docstring": "", "godNode": false, "community": "4"}, {"id": "graphify-out/graph.json:edges", "label": "edges", "type": "key", "file": "graphify-out/graph.json", "line": 0, "docstring": "", "godNode": false, "community": "4"}, {"id": "graphify-out/graph.json:metadata", "label": "metadata", "type": "key", "file": "graphify-out/graph.json", "line": 0, "docstring": "", "godNode": false, "community": "4"}, {"id": "frontend (6)/animations/12345.json", "label": "12345", "type": "config", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:v", "label": "v", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:fr", "label": "fr", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:ip", "label": "ip", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:op", "label": "op", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:w", "label": "w", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:h", "label": "h", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:nm", "label": "nm", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:ddd", "label": "ddd", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:assets", "label": "assets", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:layers", "label": "layers", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/12345.json:markers", "label": "markers", "type": "key", "file": "frontend (6)/animations/12345.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json", "label": "shopping-ecommerce", "type": "config", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:v", "label": "v", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:meta", "label": "meta", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:fr", "label": "fr", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:ip", "label": "ip", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:op", "label": "op", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:w", "label": "w", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:h", "label": "h", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:nm", "label": "nm", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:ddd", "label": "ddd", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:assets", "label": "assets", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:layers", "label": "layers", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/animations/shopping-ecommerce.json:markers", "label": "markers", "type": "key", "file": "frontend (6)/animations/shopping-ecommerce.json", "line": 0, "docstring": "", "godNode": false, "community": "5"}, {"id": "frontend (6)/src/assets/loading-animation.json", "label": "loading-animation", "type": "config", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:v", "label": "v", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:meta", "label": "meta", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:fr", "label": "fr", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:ip", "label": "ip", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:op", "label": "op", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:w", "label": "w", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:h", "label": "h", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:nm", "label": "nm", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:ddd", "label": "ddd", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:assets", "label": "assets", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:layers", "label": "layers", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}, {"id": "frontend (6)/src/assets/loading-animation.json:markers", "label": "markers", "type": "key", "file": "frontend (6)/src/assets/loading-animation.json", "line": 0, "docstring": "", "godNode": false, "community": "6"}];
+const GPU_EDGES = [{"s": 5, "d": 4, "t": "calls"}, {"s": 6, "d": 4, "t": "calls"}, {"s": 11, "d": 47, "t": "calls"}, {"s": 12, "d": 43, "t": "calls"}, {"s": 12, "d": 5, "t": "calls"}, {"s": 33, "d": 5, "t": "calls"}, {"s": 33, "d": 20, "t": "calls"}, {"s": 42, "d": 41, "t": "calls"}, {"s": 43, "d": 42, "t": "calls"}, {"s": 44, "d": 42, "t": "calls"}, {"s": 45, "d": 42, "t": "calls"}, {"s": 46, "d": 42, "t": "calls"}, {"s": 47, "d": 47, "t": "calls"}, {"s": 47, "d": 41, "t": "calls"}, {"s": 65, "d": 54, "t": "calls"}, {"s": 65, "d": 66, "t": "calls"}, {"s": 65, "d": 67, "t": "calls"}, {"s": 65, "d": 68, "t": "calls"}, {"s": 77, "d": 78, "t": "calls"}, {"s": 94, "d": 99, "t": "calls"}, {"s": 94, "d": 101, "t": "calls"}];
+</script>
+<script>(function(){
+function GraphView({canvas,data,options,callbacks}){
+  options=options||{}; callbacks=callbacks||{};
+  var ctx=canvas.getContext('2d');
+  var dpr=window.devicePixelRatio||1;
+  var s={
+    yaw:0.32,pitch:-0.18,zoom:1,tx:0,ty:0,
+    hover:null,selected:null,
+    typeFilters:new Set(Object.keys(data.types)),
+    query:'',blastSet:null,
+    autoRotate:options.autoRotate!==false,
+    rotSpeed:options.rotationSpeed||0.0006,
+    bg:options.bg||'#0A0E13',
+    isMini:!!options.isMinimap,
+  };
+  function resize(){
+    var r=canvas.getBoundingClientRect();
+    canvas.width=r.width*dpr; canvas.height=r.height*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  resize();
+  var ro=new ResizeObserver(resize); ro.observe(canvas);
+
+  function proj(n){
+    var cy=Math.cos(s.yaw),sy=Math.sin(s.yaw),cp=Math.cos(s.pitch),sp=Math.sin(s.pitch);
+    var x1=n.x*cy-n.z*sy, z1=n.x*sy+n.z*cy;
+    var y1=n.y*cp-z1*sp,  z2=n.y*sp+z1*cp;
+    var r=canvas.getBoundingClientRect();
+    var f=900*s.zoom, p=f/(f+z2+200);
+    return {sx:r.width/2+s.tx+x1*p*s.zoom, sy:r.height/2+s.ty+y1*p*s.zoom, depth:z2, scale:p*s.zoom};
+  }
+
+  function nodeOk(n){
+    if(!s.typeFilters.has(n.type)) return false;
+    if(s.query){var q=s.query.toLowerCase();if(!n.name.toLowerCase().includes(q)&&!(n.file||'').toLowerCase().includes(q))return false;}
+    return true;
+  }
+
+  function hx(h){var x=h.replace('#','');return[parseInt(x.slice(0,2),16),parseInt(x.slice(2,4),16),parseInt(x.slice(4,6),16)];}
+  function xh(r,g,b){return'#'+[r,g,b].map(function(v){return Math.max(0,Math.min(255,v|0)).toString(16).padStart(2,'0');}).join('');}
+  function mix(a,b,t){var ra=hx(a),rb=hx(b);return xh(ra[0]+(rb[0]-ra[0])*t,ra[1]+(rb[1]-ra[1])*t,ra[2]+(rb[2]-ra[2])*t);}
+  function lt(c,t){return mix(c,'#ffffff',t);}
+  function dk(c,t){return mix(c,'#000000',t);}
+
+  function render(){
+    var r=canvas.getBoundingClientRect();
+    ctx.clearRect(0,0,r.width,r.height);
+    ctx.fillStyle=s.bg; ctx.fillRect(0,0,r.width,r.height);
+
+    var pj=data.nodes.map(function(n){return{n:n,p:proj(n)};});
+    pj.sort(function(a,b){return b.p.depth-a.p.depth;});
+    var dim=!!(s.query||s.blastSet||s.selected);
+    var fs=s.blastSet;
+
+    if(!s.isMini){
+      ctx.lineWidth=0.6;
+      var pm=new Map(pj.map(function(x){return[x.n.id,x];}));
+      data.edges.forEach(function(e){
+        var a=pm.get(e.source),b=pm.get(e.target);
+        if(!a||!b) return;
+        var inF=fs?(fs.has(e.source)&&fs.has(e.target)):true;
+        var al=dim?0.025:0.075; if(fs&&inF) al=0.55;
+        if(al<0.02) return;
+        var avgD=(a.p.depth+b.p.depth)/2;
+        var fog=Math.max(0,Math.min(1,(avgD+500)/1000));
+        ctx.strokeStyle=fs&&inF
+          ?('rgba(242,198,109,'+(al*(1-fog*0.5))+')')
+          :('rgba(140,160,200,'+(al*(1-fog*0.6))+')');
+        ctx.beginPath(); ctx.moveTo(a.p.sx,a.p.sy); ctx.lineTo(b.p.sx,b.p.sy); ctx.stroke();
+      });
+    }
+
+    pj.forEach(function(item){
+      var n=item.n, p=item.p;
+      var m=nodeOk(n);
+      var inF=fs?fs.has(n.id):true;
+      var isSel=s.selected&&s.selected.id===n.id;
+      var isHov=s.hover&&s.hover.id===n.id;
+      var d=1;
+      if(fs&&!inF) d=0.12; else if(dim&&!m&&!isSel) d=0.12;
+      var br=(n.size||3)*(s.isMini?0.5:1);
+      var rad=br*p.scale*(isHov||isSel?1.45:1);
+      if(rad<0.4) return;
+      var fog=Math.max(0,Math.min(1,(p.depth+500)/1000));
+      var bc=(data.types[n.type]||{color:'#888'}).color;
+      var col=mix(bc,s.bg,fog*0.42);
+      var g=ctx.createRadialGradient(p.sx-rad*0.35,p.sy-rad*0.4,rad*0.1,p.sx,p.sy,rad);
+      g.addColorStop(0,lt(col,0.42)); g.addColorStop(0.5,col); g.addColorStop(1,dk(col,0.52));
+      ctx.globalAlpha=d;
+      ctx.fillStyle=g;
+      ctx.beginPath(); ctx.arc(p.sx,p.sy,rad,0,Math.PI*2); ctx.fill();
+      if(rad>1.5){
+        ctx.fillStyle='rgba(255,255,255,'+(0.48*(1-fog*0.5))+')';
+        ctx.beginPath(); ctx.arc(p.sx-rad*0.35,p.sy-rad*0.4,rad*0.22,0,Math.PI*2); ctx.fill();
+      }
+      if((isSel||isHov)&&!s.isMini){
+        ctx.globalAlpha=1; ctx.strokeStyle=isSel?'#F2C66D':'rgba(230,235,242,0.7)';
+        ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(p.sx,p.sy,rad+4,0,Math.PI*2); ctx.stroke();
+      }
+      if(!s.isMini&&(n.type==='god'||n.type==='module'||isHov||isSel||(s.query&&m))){
+        var ls=n.type==='god'||n.type==='module'?11:10;
+        ctx.globalAlpha=d*(1-fog*0.4);
+        ctx.font=ls+'px "Inter",system-ui,sans-serif';
+        ctx.fillStyle='rgba(230,235,242,0.92)';
+        ctx.textAlign='left'; ctx.textBaseline='middle';
+        ctx.fillText(n.name,p.sx+rad+5,p.sy);
+      }
+      ctx.globalAlpha=1;
+    });
+  }
+
+  var drag=false,lx,ly,mv=false;
+  canvas.addEventListener('pointerdown',function(e){
+    drag=true;lx=e.clientX;ly=e.clientY;mv=false;
+    canvas.setPointerCapture(e.pointerId);s.autoRotate=false;
+  });
+  canvas.addEventListener('pointermove',function(e){
+    var r=canvas.getBoundingClientRect();
+    var mx=e.clientX-r.left,my=e.clientY-r.top;
+    if(drag){
+      var dx=e.clientX-lx,dy=e.clientY-ly;
+      if(Math.abs(dx)+Math.abs(dy)>2) mv=true;
+      if(e.shiftKey){s.tx+=dx;s.ty+=dy;}
+      else{s.yaw+=dx*0.005;s.pitch=Math.max(-1.4,Math.min(1.4,s.pitch+dy*0.005));}
+      lx=e.clientX;ly=e.clientY;
+    }else{
+      var hit=pick(mx,my);
+      if(hit!==s.hover){s.hover=hit;callbacks.onHover&&callbacks.onHover(hit,mx,my);}
+      else if(hit&&callbacks.onHover) callbacks.onHover(hit,mx,my);
+    }
+  });
+  canvas.addEventListener('pointerup',function(e){
+    drag=false;
+    var r=canvas.getBoundingClientRect();
+    if(!mv){var hit=pick(e.clientX-r.left,e.clientY-r.top);callbacks.onClick&&callbacks.onClick(hit);}
+  });
+  canvas.addEventListener('pointerleave',function(){
+    if(s.hover){s.hover=null;callbacks.onHover&&callbacks.onHover(null);}
+  });
+  canvas.addEventListener('wheel',function(e){
+    e.preventDefault();
+    s.zoom=Math.max(0.25,Math.min(4.5,s.zoom*Math.exp(-e.deltaY*0.0015)));
+  },{passive:false});
+
+  function pick(mx,my){
+    var best=null,bd=20;
+    data.nodes.forEach(function(n){
+      if(!nodeOk(n)) return;
+      var p=proj(n); var rad=(n.size||3)*p.scale;
+      var dx=p.sx-mx,dy=p.sy-my;
+      var d=Math.sqrt(dx*dx+dy*dy)-rad;
+      if(d<bd){bd=d;best=n;}
+    });
+    return best;
+  }
+
+  function doBlast(node,depth){
+    depth=depth||2;
+    if(!node){s.blastSet=null;return;}
+    var set=new Set([node.id]),front=[node.id];
+    for(var i=0;i<depth;i++){
+      var next=[];
+      front.forEach(function(id){
+        var adj=data.adjacency.get(id);
+        if(!adj) return;
+        adj.forEach(function(nb){if(!set.has(nb)){set.add(nb);next.push(nb);}});
+      });
+      front=next;
+    }
+    s.blastSet=set;
+  }
+
+  function animTo(ty,tp,tz){
+    var sy=s.yaw,sp=s.pitch,sz=s.zoom,tz2=tz!==undefined?tz:s.zoom;
+    var t0=performance.now(),dur=600;
+    function step(now){
+      var t=Math.min(1,(now-t0)/dur);
+      var e=t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+      s.yaw=sy+(ty-sy)*e;s.pitch=sp+(tp-sp)*e;s.zoom=sz+(tz2-sz)*e;
+      if(t<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  var raf;
+  function loop(){if(s.autoRotate&&!s.isMini)s.yaw+=s.rotSpeed;render();raf=requestAnimationFrame(loop);}
+  loop();
+
+  return{
+    state:s,
+    setQuery:function(q){s.query=q;},
+    setFilters:function(f){s.typeFilters=new Set(f);},
+    setBlast:function(n,d){doBlast(n,d);},
+    select:function(n){s.selected=n;},
+    focus:function(n){if(!n)return;animTo(-Math.atan2(n.x,n.z),Math.atan2(n.y,Math.sqrt(n.x*n.x+n.z*n.z)));},
+    resetView:function(){animTo(0.32,-0.18,1);s.tx=0;s.ty=0;},
+    destroy:function(){cancelAnimationFrame(raf);ro.disconnect();},
+    project:proj,
+  };
+}
+window.GraphView=GraphView;
+})();</script>
+<script>(function(){
+  var N=GPU_NODES.length, E=GPU_EDGES.length;
+
+  // Group by community
+  var commGroups={};
+  GPU_NODES.forEach(function(n,i){
+    var c=n.community||'0';
+    if(!commGroups[c]) commGroups[c]=[];
+    commGroups[c].push(i);
+  });
+
+  // Degree
+  var deg=new Array(N).fill(0);
+  GPU_EDGES.forEach(function(e){deg[e.s]++;deg[e.d]++;});
+
+  // Place communities on Fibonacci sphere
+  var comms=Object.keys(commGroups), C=comms.length, SR=460;
+  var commPos={};
+  comms.forEach(function(c,ci){
+    var phi=Math.acos(1-2*(ci+0.5)/C);
+    var theta=Math.PI*(1+Math.sqrt(5))*ci;
+    commPos[c]=[SR*Math.sin(phi)*Math.cos(theta), SR*Math.cos(phi), SR*Math.sin(phi)*Math.sin(theta)];
+  });
+
+  // Node positions within community
+  var commCur={};
+  var nodes3d=GPU_NODES.map(function(n,i){
+    var c=n.community||'0';
+    if(!commCur[c]) commCur[c]=0;
+    var li=commCur[c]++, gs=commGroups[c].length;
+    var cp=commPos[c];
+    var localR=Math.max(28,Math.sqrt(gs)*17);
+    var phi=Math.acos(1-2*(li+0.5)/gs);
+    var theta=Math.PI*(1+Math.sqrt(5))*li;
+    var type=n.godNode?'god':(n.type||'function');
+    return{
+      id:i,
+      name:n.label||'?',
+      file:n.file||'',
+      line:n.line||0,
+      docstring:n.docstring||'',
+      community:c,
+      type:type,
+      degree:deg[i],
+      size:n.godNode?12:(type==='module'?7:type==='class'?5:type==='interface'?4.5:3.5),
+      x:cp[0]+localR*Math.sin(phi)*Math.cos(theta),
+      y:cp[1]+localR*Math.cos(phi),
+      z:cp[2]+localR*Math.sin(phi)*Math.sin(theta),
+    };
+  });
+
+  var edges3d=GPU_EDGES.map(function(e){return{source:e.s,target:e.d,type:e.t||''};});
+
+  var adjacency=new Map();
+  edges3d.forEach(function(e){
+    if(!adjacency.has(e.source)) adjacency.set(e.source,new Set());
+    if(!adjacency.has(e.target)) adjacency.set(e.target,new Set());
+    adjacency.get(e.source).add(e.target);
+    adjacency.get(e.target).add(e.source);
+  });
+
+  var TYPES={
+    module:   {label:'Module',   color:'#6FCF97'},
+    class:    {label:'Class',    color:'#7AA7FF'},
+    function: {label:'Function', color:'#F2C66D'},
+    method:   {label:'Method',   color:'#C58CF0'},
+    interface:{label:'Interface',color:'#56CCF2'},
+    component:{label:'Component',color:'#F2A65A'},
+    god:      {label:'God Node', color:'#F2A65A'},
+    default:  {label:'Other',    color:'#8090A8'},
+  };
+
+  window.GRAPH_DATA={nodes:nodes3d,edges:edges3d,types:TYPES,adjacency:adjacency};
+})();</script>
+<script>
+(function(){
+  var data = window.GRAPH_DATA;
+  var TYPES = data.types;
+
+  // ---- Init main view ----
+  var mainCanvas = document.getElementById('main-canvas');
+  var view = window.GraphView({
+    canvas: mainCanvas,
+    data: data,
+    options: { bg: '#0A0E13' },
+    callbacks: {
+      onHover: function(node, x, y) { updateTooltip(node, x, y); },
+      onClick: function(node) {
+        selected = node;
+        view.select(node);
+        if (node) { view.setBlast(node, 2); view.focus(node); }
+        else view.setBlast(null);
+        updateInspector();
+      },
+    },
+  });
+
+  // ---- Init minimap ----
+  var miniCanvas = document.getElementById('mini-canvas');
+  var miniView = window.GraphView({
+    canvas: miniCanvas,
+    data: data,
+    options: { isMinimap: true, autoRotate: true, rotationSpeed: 0.002, bg: 'transparent', showLabels: false },
+  });
+
+  // ---- State ----
+  var selected = null;
+  var query = '';
+  var filters = new Set(Object.keys(TYPES));
+  var simOn = true;
+
+  // ---- Type chips ----
+  var chipsEl = document.getElementById('type-chips');
+  Object.entries(TYPES).forEach(function(entry) {
+    var key = entry[0], t = entry[1];
+    var btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.setAttribute('data-type', key);
+    btn.innerHTML = '<span class="chip-dot" style="background:'+t.color+'"></span>' + t.label;
+    btn.addEventListener('click', function() {
+      if (filters.has(key)) filters.delete(key); else filters.add(key);
+      btn.className = 'chip' + (filters.has(key) ? '' : ' off');
+      view.setFilters(filters);
+    });
+    chipsEl.appendChild(btn);
+  });
+
+  // ---- Search ----
+  var searchEl = document.getElementById('search');
+  searchEl.addEventListener('input', function(e) {
+    query = e.target.value;
+    view.setQuery(query);
+  });
+  document.addEventListener('keydown', function(e) {
+    if ((e.key === 'f' || e.key === 'F') && document.activeElement !== searchEl) {
+      e.preventDefault(); searchEl.focus();
+    }
+    if (e.key === 'Escape') {
+      if (document.activeElement === searchEl) { searchEl.blur(); return; }
+      selected = null; view.select(null); view.setBlast(null);
+      updateInspector();
+    }
+    if (e.key === 'r' || e.key === 'R') resetView();
+  });
+
+  // ---- Tooltip ----
+  var ttEl = document.getElementById('tooltip');
+  var ttDot = document.getElementById('tt-dot');
+  var ttName = document.getElementById('tt-name');
+  var ttInfo = document.getElementById('tt-info');
+
+  function updateTooltip(node, x, y) {
+    if (!node || (selected && selected.id === node.id)) { ttEl.style.display = 'none'; return; }
+    var t = TYPES[node.type] || TYPES.default || { color: '#888', label: node.type };
+    ttDot.style.background = t.color;
+    ttDot.style.boxShadow = '0 0 8px ' + t.color;
+    ttName.textContent = node.name;
+    ttInfo.innerHTML = t.label + ' &middot; ' + node.degree + ' connection' + (node.degree === 1 ? '' : 's') + '<br>' +
+      '<span style="font-family:var(--mono)">' + (node.file || '') + (node.line ? ':' + node.line : '') + '</span>';
+    var px = Math.min(x + 16, window.innerWidth - 210);
+    var py = Math.min(y + 14, window.innerHeight - 80);
+    ttEl.style.left = px + 'px';
+    ttEl.style.top = py + 'px';
+    ttEl.style.display = 'block';
+  }
+
+  // ---- Inspector ----
+  var inspector = document.getElementById('inspector');
+  var inspContent = document.getElementById('inspector-content');
+
+  document.getElementById('inspector-close').addEventListener('click', function() {
+    selected = null; view.select(null); view.setBlast(null);
+    updateInspector();
+  });
+
+  function updateInspector() {
+    ttEl.style.display = 'none';
+    if (!selected) {
+      inspector.classList.remove('open');
+      inspContent.innerHTML = '<div class="insp-idle" id="insp-idle"><div class="insp-idle-label">Inspector</div>' +
+        '<div class="insp-idle-text">Click any node to see its neighborhood, blast radius, and connections.</div></div>';
+      return;
+    }
+    inspector.classList.add('open');
+    var n = selected;
+    var t = TYPES[n.type] || { color: '#888', label: n.type };
+    var adj = data.adjacency.get(n.id) || new Set();
+    var neighbors = [];
+    adj.forEach(function(nid) { var nb = data.nodes[nid]; if (nb) neighbors.push(nb); });
+    neighbors.sort(function(a,b) { return b.degree - a.degree; });
+    var top = neighbors.slice(0, 12);
+
+    var html = '<button id="inspector-close">×</button>';
+    html += '<div class="insp-type"><span class="insp-dot" style="background:'+t.color+';box-shadow:0 0 10px '+t.color+'"></span>'+t.label+'</div>';
+    html += '<div class="insp-name">'+escHtml(n.name)+'</div>';
+    html += '<div class="insp-file">'+escHtml(n.file||'')+(n.line?':'+n.line:'')+'</div>';
+    html += '<div class="insp-grid">';
+    [ ['Connections', n.degree],
+      ['Community', n.community],
+      ['Blast radius', view.state.blastSet ? view.state.blastSet.size : '—'],
+      ['Type', t.label],
+    ].forEach(function(row) {
+      html += '<div class="insp-cell"><div class="insp-cell-label">'+row[0]+'</div><div class="insp-cell-val">'+row[1]+'</div></div>';
+    });
+    html += '</div>';
+    if (top.length) {
+      html += '<div class="neighbors-label">Connected ('+top.length+(adj.size>12?'/'+adj.size:'')+')</div>';
+      html += '<div class="neighbors-list">';
+      top.forEach(function(nb) {
+        var nt = TYPES[nb.type] || { color: '#888' };
+        html += '<button class="neighbor-btn" data-nid="'+nb.id+'">' +
+          '<span class="neighbor-dot" style="background:'+nt.color+'"></span>' +
+          '<span class="neighbor-name">'+escHtml(nb.name)+'</span>' +
+          '<span class="neighbor-deg">'+nb.degree+'</span></button>';
+      });
+      html += '</div>';
+    }
+    html += '<div class="blast-notice"><div class="blast-notice-title">Blast radius active</div>Showing 2-hop neighborhood. These nodes are affected when this one changes.</div>';
+    inspContent.innerHTML = html;
+
+    document.getElementById('inspector-close').addEventListener('click', function() {
+      selected = null; view.select(null); view.setBlast(null); updateInspector();
+    });
+    inspContent.querySelectorAll('.neighbor-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var nid = parseInt(btn.getAttribute('data-nid'));
+        var nb = data.nodes[nid];
+        if (!nb) return;
+        selected = nb; view.select(nb); view.setBlast(nb, 2); view.focus(nb);
+        updateInspector();
+      });
+    });
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ---- Controls ----
+  window.toggleSim = function() {
+    simOn = !simOn;
+    view.toggleAutoRotate(simOn);
+    var btn = document.getElementById('sim-btn');
+    btn.className = 'ctrl-btn' + (simOn ? ' on' : '');
+    btn.textContent = '⚡ Auto-rotate: ' + (simOn ? 'ON' : 'OFF');
+  };
+  window.focusGods = function() {
+    var gods = data.nodes.filter(function(n) { return n.type === 'god'; });
+    if (gods.length) view.focus(gods[0]);
+  };
+  window.resetView = function() { view.resetView(); };
+
+  // ---- Chrome fade-in on hover ----
+  var leftPanel = document.getElementById('left-panel');
+  var topBar = document.getElementById('top-bar');
+  [mainCanvas, document.body].forEach(function(el) {
+    el.addEventListener('mousemove', function() {
+      leftPanel.style.opacity = '1';
+    });
+  });
+
+  updateInspector();
+})();
+</script>
+</body></html>

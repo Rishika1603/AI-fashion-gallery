@@ -1,0 +1,36 @@
+# Core API
+fastapi~=0.118.0
+uvicorn~=0.37.0
+python-multipart~=0.0.20
+python-dotenv~=1.1.1
+pydantic~=2.11.9
+aiofiles~=24.1.0
+slowapi~=0.1.9
+
+# Database / ORM (kept for possible future use)
+sqlalchemy~=2.0.43
+
+# ML / Embeddings
+torch~=2.10.0
+transformers~=5.1.0
+sentence-transformers~=5.2.2
+Pillow~=12.0.0
+numpy~=2.3.5
+
+# Vector Store
+pinecone~=8.0.1
+
+# AI / Chat
+google-generativeai~=0.8.6
+langchain-google-genai>=1.0.3
+ragas>=0.4.3
+
+# Virtual Try-On
+gradio_client~=2.0.3
+
+# HTTP
+requests~=2.32.5
+httpx~=0.28.1
+
+# Data
+pandas~=2.3.2
