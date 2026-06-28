@@ -4,7 +4,7 @@ import tempfile
 import logging
 import traceback
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageFilter
 from dotenv import load_dotenv
 
 try:
@@ -244,27 +244,54 @@ class TryOnService:
                 pass
 
     def _mock_tryon(self, person_img, garment_img):
-        """Fallback mock implementation"""
+        """Improved mock: remove garment background and blend into person image."""
         import time
         time.sleep(2)  # Simulate processing
 
-        # Prepare with aspect ratio preservation
-        person_img = self._prepare_image(person_img, max_size=1024)
-        garment_img = self._prepare_image(garment_img, max_size=768)
+        person = self._prepare_image(person_img, max_size=1024).convert("RGBA")
+        garment = self._prepare_image(garment_img, max_size=768).convert("RGBA")
 
-        # Simple overlay
-        result_img = person_img.copy()
-        garment_small = garment_img.resize((300, 400))
+        # Remove garment background using simple color-distance heuristic
+        garment_no_bg = self._remove_background(garment)
 
-        # Center the garment overlay
-        x_offset = (result_img.width - garment_small.width) // 2
-        y_offset = result_img.height // 3
-        result_img.paste(garment_small, (x_offset, y_offset))
+        # Determine placement region based on garment aspect ratio
+        pw, ph = person.size
+        gw, gh = garment_no_bg.size
+        max_w = int(pw * 0.75)
+        scale = min(1.0, max(1, max_w) / max(1, gw))
+        new_gw = max(1, int(gw * scale))
+        new_gh = max(1, int(gh * scale))
+        garment_resized = garment_no_bg.resize((new_gw, new_gh), Image.Resampling.LANCZOS)
 
-        # Convert to bytes
+        # Default placement: center-bottom (torso)
+        x = (pw - new_gw) // 2
+        y = int(ph * 0.25)
+
+        # Soft feathered paste using alpha channel
+        person_rgba = person.copy()
+        garment_rgba = garment_resized.copy()
+        person_rgba.paste(garment_rgba, (x, y), garment_rgba)
+
+        out = person_rgba.convert("RGB")
         output_buffer = io.BytesIO()
-        result_img.save(output_buffer, format="PNG")
+        out.save(output_buffer, format="PNG")
         return output_buffer.getvalue()
+
+    def _remove_background(self, img: Image.Image) -> Image.Image:
+        """Simple background removal using white/light-color thresholding."""
+        img = img.convert("RGBA")
+        datas = img.getdata()
+        new_data = []
+        for item in datas:
+            r, g, b, a = item
+            brightness = (r + g + b) / 3
+            if brightness > 230 and r > 200 and g > 200 and b > 200:
+                # Likely white background -> transparent
+                new_data.append((r, g, b, 0))
+            else:
+                new_data.append((r, g, b, a))
+        img.putdata(new_data)
+        return img
 
 # Initialize the service
 tryon_service = TryOnService()
