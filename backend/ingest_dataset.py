@@ -6,7 +6,7 @@ from PIL import Image
 from backend.embeddings import get_image_embedding
 from backend.vector_store import upsert_vectors, delete_index
 
-DATASET_ROOT = "DATASETS/Clothes_Dataset"
+DATASET_ROOT = "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset"
 
 CATEGORY_MAP = {
     "Blazer": "Blazer",

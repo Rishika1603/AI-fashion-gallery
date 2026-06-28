@@ -60,7 +60,7 @@ app.add_middleware(
 )
 
 # Static files
-DATASET_DIR = "DATASETS/Clothes_Dataset"
+DATASET_DIR = "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset"
 if os.path.exists(DATASET_DIR):
     app.mount("/static/dataset", StaticFiles(directory=DATASET_DIR), name="dataset")
 UPLOAD_DIR = "uploads"

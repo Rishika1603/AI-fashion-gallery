@@ -1,121 +1,87 @@
 from .database import SessionLocal, engine, Base
 from .models import Product
-from .embeddings import get_image_embedding
-import requests
 from PIL import Image
 from io import BytesIO
+from .ingest_dataset import CATEGORY_MAP
+
+import os
+import random
+
+try:
+    from .embeddings import get_image_embedding
+    have_embeddings = True
+except Exception:
+    have_embeddings = False
+
+DATASET_ROOT = "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset"
 
 # Re-create tables to update schema (WARNING: Data loss if exists, ok for seed)
 # In production, use Alembic migrations
 Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
-def seed_data():
+def seed_data(limit_per_category: int | None = None):
     db = SessionLocal()
-    
+
     # Check if data already exists
     if db.query(Product).first():
         print("Database already seeded.")
         return
 
-    products_data = [
-        {
-            "name": "Oversized Graphic Hoodie",
-            "style_code": "STR-2024-H01",
-            "price_min": 55.0,
-            "price_max": 55.0,
-            "image_url": "https://images.unsplash.com/photo-1556821840-3a63f95609a7?q=80&w=2787&auto=format&fit=crop",
-            "category": "Hoodies",
-            "color_swatches": ["#111111", "#ffffff", "#6366f1"],
-            "social_label": "Trending",
-            "likes": 1240
-        },
-        {
-            "name": "Cargo Tech Pants",
-            "style_code": "TR-BT-09",
-            "price_min": 85.0,
-            "price_max": 95.0,
-            "image_url": "https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?q=80&w=2787&auto=format&fit=crop",
-            "category": "Pants",
-            "color_swatches": ["#1a1a1a", "#2d3436", "#00d084"],
-            "social_label": "Bestseller",
-            "likes": 850
-        },
-        {
-            "name": "Retro High-Top Sneakers",
-            "style_code": "SNK-VNT-88",
-            "price_min": 120.0,
-            "price_max": 120.0,
-            "image_url": "https://images.unsplash.com/photo-1552346154-21d32810aba3?q=80&w=2670&auto=format&fit=crop",
-            "category": "Footwear",
-            "color_swatches": ["#ffffff", "#ff3b5c", "#111111"],
-            "social_label": "Limited Edition",
-            "likes": 2100
-        },
-        {
-            "name": "Minimalist Wool Overcoat",
-            "style_code": "WTR-C01",
-            "price_min": 180.0,
-            "price_max": 220.0,
-            "image_url": "https://images.unsplash.com/photo-1539571480139-1c4e79ca5ca7?q=80&w=2787&auto=format&fit=crop",
-            "category": "Outerwear",
-            "color_swatches": ["#e17055", "#636e72", "#2d3436"],
-            "social_label": "Editor's Choice",
-            "likes": 540
-        },
-        {
-            "name": "Distressed Denim Jacket",
-            "style_code": "DNM-J02",
-            "price_min": 75.0,
-            "price_max": 75.0,
-            "image_url": "https://images.unsplash.com/photo-1551537482-f2075a1d41f2?q=80&w=2787&auto=format&fit=crop",
-            "category": "Jackets",
-            "color_swatches": ["#74b9ff", "#ffffff", "#111111"],
-            "social_label": "Trending",
-            "likes": 920
-        },
-        {
-            "name": "Silk Pattern Shirt",
-            "style_code": "SHR-SLK-05",
-            "price_min": 45.0,
-            "price_max": 50.0,
-            "image_url": "https://images.unsplash.com/photo-1596755094514-f87034a264c6?q=80&w=2788&auto=format&fit=crop",
-            "category": "Shirts",
-            "color_swatches": ["#fdcb6e", "#ffffff", "#00b894"],
-            "social_label": "Popular",
-            "likes": 410
-        }
-    ]
+    if not os.path.exists(DATASET_ROOT):
+        print(f"Dataset directory '{DATASET_ROOT}' not found.")
+        return
 
-    for p_data in products_data:
-        print(f"Processing {p_data['name']}...")
-        
-        # Download image for embedding
-        try:
-            response = requests.get(p_data["image_url"], headers={"User-Agent": "Mozilla/5.0"})
-            image = Image.open(BytesIO(response.content))
-            embedding = get_image_embedding(image)
-        except Exception as e:
-            print(f"Failed to process image for {p_data['name']}: {e}")
-            embedding = None
+    categories_count = {}
+    seeded = 0
 
-        product = Product(
-            name=p_data["name"],
-            style_code=p_data["style_code"],
-            price_min=p_data["price_min"],
-            price_max=p_data["price_max"],
-            image_url=p_data["image_url"],
-            category=p_data["category"],
-            color_swatches=p_data["color_swatches"],
-            social_label=p_data["social_label"],
-            likes=p_data["likes"],
-            in_stock=1,
-            embedding=embedding
-        )
-        db.add(product)
-    
+    for root, dirs, files in os.walk(DATASET_ROOT):
+        raw_category = os.path.basename(root)
+        category = CATEGORY_MAP.get(raw_category, raw_category)
+        if raw_category == "Clothes_Dataset":
+            category = "Uncategorized"
+
+        if limit_per_category and categories_count.get(category, 0) >= limit_per_category:
+            continue
+
+        for file in files:
+            if not file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                continue
+            if limit_per_category and categories_count.get(category, 0) >= limit_per_category:
+                break
+
+            abs_path = os.path.abspath(os.path.join(root, file))
+            name = os.path.splitext(file)[0].replace("_", " ").title()
+
+            try:
+                embedding = None
+                if have_embeddings:
+                    with open(abs_path, "rb") as img_f:
+                        image = Image.open(BytesIO(img_f.read()))
+                    embedding = get_image_embedding(image)
+            except Exception as e:
+                print(f"Failed embedding for {abs_path}: {e}")
+                embedding = None
+
+            product = Product(
+                name=name,
+                style_code=f"DST-{random.randint(10000, 99999)}",
+                price_min=float(random.randint(20, 100)),
+                price_max=float(random.randint(110, 300)),
+                image_url=abs_path,
+                category=category,
+                color_swatches=["#000000"],
+                social_label=None,
+                likes=0,
+                in_stock=1,
+                embedding=embedding,
+            )
+            db.add(product)
+            categories_count[category] = categories_count.get(category, 0) + 1
+            seeded += 1
+
     db.commit()
-    print("Database seeded successfully with embeddings.")
+    print(f"Database seeded successfully with {seeded} products.")
 
 if __name__ == "__main__":
     seed_data()
