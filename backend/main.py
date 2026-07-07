@@ -115,17 +115,19 @@ except Exception as e:
     try_on_available = False
     tryon_service = None
 
-# Fashn.ai Comprehensive Service
+# Fashn.ai Comprehensive Service — OPTIONAL / LAZY
+# Imported lazily inside route handlers so the app still starts when
+# FASHN_API_KEY is not set. If you never use Fashn, this is skipped.
 try:
-    from .fashn_service import get_fashn_client
-    _fashn_client = get_fashn_client()
-    fashn_available = _fashn_client is not None
+    from .fashn_service import get_fashn_client, FashnAIClient
+    _fashn_import_ok = True
 except Exception as e:
-    logger.warning(f"Fashn.ai service could not be loaded: {e}")
-    fashn_available = False
-    _fashn_client = None
+    _fashn_import_ok = False
+    _fashn_import_error = str(e)
+    logger.warning(f"Fashn.ai service not available: {e}")
 
-# Chatbot
+# Chatbot — OPTIONAL / LAZY
+# Imported lazily so missing genai/pinecone/torch don't break startup.
 try:
     from .chat_service import generate_chat_response
     have_chat = True
@@ -431,14 +433,26 @@ async def get_chat_history(session_id: str, db: Session = Depends(get_db)):
 
 
 # ── Fashn.ai Comprehensive Feature Routes ────────────────────────────
+# Fully optional: endpoints register unconditionally, but return 503
+# unless FASHN_API_KEY is configured and the service imports cleanly.
+_fashn_enabled = False
+try:
+    from .fashn_service import get_fashn_client
+    _fashn_enabled = True
+except Exception as e:
+    logger.warning("Fashn.ai routes disabled on import: %s", e)
 
-from .fashn_service import FashnAIClient, get_fashn_client
 from fastapi import UploadFile, File, Form
 from typing import List as TypingList
 
 
 def _fashn_guard():
-    """Raise 503 if Fashn.ai client is unavailable."""
+    if not _fashn_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Fashn.ai service is not configured on this deployment",
+        )
+    from .fashn_service import get_fashn_client
     client = get_fashn_client()
     if client is None:
         raise HTTPException(

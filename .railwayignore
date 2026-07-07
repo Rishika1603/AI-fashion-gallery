@@ -8,3 +8,20 @@ __pycache__
 .DS_Store
 .git
 dist
+
+# Large untracked folders — deploy pack should never include these
+Clothes_Dataset
+opentryon
+tryon_uploads
+*.sqlite
+*.sqlite3
+*.csv
+*.parquet
+
+# Local env / config
+.env
+.env.local
+*.log
+.cache
+.idea
+.vscode

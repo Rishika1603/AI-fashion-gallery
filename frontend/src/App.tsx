@@ -6,7 +6,7 @@ import Results from './components/Results';
 import type { SearchResult, ScreenState } from './types';
 import { searchByPhoto as apiSearchByPhoto } from './api';
 import ChatBot from './components/ChatBot';
-import FashnStudio from './components/FashnStudio';
+
 import AdminPanel from './components/AdminPanel';
 
 function App() {
@@ -14,7 +14,6 @@ function App() {
   const [showOverlay, setShowOverlay] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [showFashnStudio, setShowFashnStudio] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [adminKey, setAdminKey] = useState<string | null>(null);
 
@@ -75,21 +74,7 @@ function App() {
             <span>🛡️</span> Admin
           </button>
         )}
-
-        {/* Fashn.ai Studio button */}
-        {screen === 'GALLERY' && !showFashnStudio && (
-          <button
-            onClick={() => setShowFashnStudio(true)}
-            className="px-5 py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white font-bold shadow-lg shadow-violet-500/25 transition-all hover:scale-105 flex items-center gap-2"
-          >
-            <span>✨</span> Fashn.ai Studio
-          </button>
-        )}
       </div>
-
-      {showFashnStudio && (
-        <FashnStudio onClose={() => setShowFashnStudio(false)} />
-      )}
 
       {showAdminPanel && (
         <AdminPanel

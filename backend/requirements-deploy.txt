@@ -1,7 +1,6 @@
-# Minimal Railway deployment deps — avoid free-plan resource caps.
-# Heavy ML libs (torch, transformers, sentence-transformers, ragas, langgraph,
-# langchain) are intentionally excluded. Image search will report 503 in
-# production; other endpoints (chat, products, fashn, try-on admin) work.
+# Minimal Railway deployment deps — image search + chat enabled.
+# Opt out of heavy optional features by leaving their API keys unset;
+# missing optional deps are handled via lazy imports and 503s.
 
 # Core API
 fastapi~=0.118.0
@@ -15,8 +14,15 @@ sqlalchemy~=2.0.43
 Pillow~=12.0.0
 
 # HTTP
-requests~=2.32.5
 httpx~=0.28.1
+requests~=2.32.5
 
-# Virtual Try-On (gradio_client only — no torch needed)
+# Chat / embeddings / search
+google-generativeai~=0.8.6
+pinecone~=8.0.1
+torch~=2.10.0
+transformers~=5.1.0
+numpy~=2.3.5
+
+# Try-On
 gradio_client~=2.0.3
