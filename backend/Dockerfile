@@ -23,7 +23,11 @@ ENV LOG_LEVEL=INFO
 ENV HOST=0.0.0.0
 ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
-ENV ENABLE_EMBEDDINGS=0
+# Disable the free Gradio HF Spaces try-on backend by default — its
+# /heartbeat endpoint returns 404 on the upstream Space and floods
+# logs. Set ENABLE_GRADIO_TRYON=1 to re-enable, or configure a paid
+# backend (Fashn.ai, Replicate) to take its place.
+ENV ENABLE_GRADIO_TRYON=0
 
 # Expose the API port
 EXPOSE 8000

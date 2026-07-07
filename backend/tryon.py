@@ -167,16 +167,50 @@ class GradioVTONClient:
 
     Uses IDM-VTON (yisol/IDM-VTON) — excellent quality, supports
     auto-masking. Free but may have queue delays.
+
+    NOTE: gradio_client.Client spawns a background heartbeat thread that
+    polls /heartbeat/{session_id} on the Space every ~300ms. If the
+    Space doesn't expose that endpoint (404), it spams logs and drains
+    bandwidth. We initialise the client lazily (on first generate())
+    and dispose of it after use to limit the blast radius.
     """
 
     SPACE = "yisol/IDM-VTON"
 
     def __init__(self, hf_token: str | None = None):
         self.hf_token = hf_token or os.getenv("HF_TOKEN")
-        from gradio_client import Client, handle_file
-        logger.info("Connecting to HF Space %s ...", self.SPACE)
-        self._client = Client(self.SPACE, token=self.hf_token)
-        self._handle_file = handle_file
+        self._client = None
+        self._handle_file = None
+        self._lock = __import__("threading").Lock()
+        logger.info(
+            "Gradio VTON client registered (Space %s) — will connect on first use",
+            self.SPACE,
+        )
+
+    def _ensure_client(self):
+        if self._client is not None:
+            return
+        with self._lock:
+            if self._client is not None:
+                return
+            from gradio_client import Client, handle_file
+            logger.info("Connecting to HF Space %s (lazy init) ...", self.SPACE)
+            self._client = Client(self.SPACE, token=self.hf_token)
+            self._handle_file = handle_file
+
+    def _dispose_client(self):
+        """Close the gradio client to stop the heartbeat thread."""
+        client = self._client
+        if client is None:
+            return
+        self._client = None
+        self._handle_file = None
+        try:
+            # gradio_client >= 1.0 exposes close(); older versions don't.
+            if hasattr(client, "close"):
+                client.close()
+        except Exception:
+            pass
 
     def generate(
         self, person: Image.Image, garment: Image.Image
@@ -185,8 +219,8 @@ class GradioVTONClient:
         garment_path = f"/tmp/hf_vton_garment_{os.getpid()}.png"
         person.save(person_path, format="PNG")
         garment.save(garment_path, format="PNG")
-
         try:
+            self._ensure_client()
             logger.info("Calling IDM-VTON on HF Spaces ...")
             result = self._client.predict(
                 dict={
@@ -212,6 +246,9 @@ class GradioVTONClient:
                     os.remove(p)
                 except OSError:
                     pass
+            # Dispose the client so the heartbeat thread stops after each call.
+            # Next generate() will reconnect — small latency cost, big log savings.
+            self._dispose_client()
 
 
 # ── Backend: Segmind (existing, kept as option) ──────────────────────
@@ -279,14 +316,26 @@ class TryOnService:
         self._client = None
         self._backend_name = None
 
-        configs: list[tuple[str, str, type]] = [
+        # Production deployments can opt out of the free Gradio backend
+        # by setting ENABLE_GRADIO_TRYON=0. The HF Space the default URL
+        # points to (yisol/IDM-VTON) doesn't expose a /heartbeat endpoint,
+        # so the gradio_client library floods logs with 404s. Disabling
+        # it is the cleanest fix until a paid backend is configured.
+        gradio_enabled = os.getenv("ENABLE_GRADIO_TRYON", "1").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+
+        configs: list[tuple[str, str, type | None]] = [
             ("Replicate (IDM-VTON)",  "REPLICATE_API_TOKEN", ReplicateVTONClient),
             ("Fashn.ai",              "FASHN_API_KEY",       FashnVTONClient),
-            ("Gradio HF Spaces",      "",                    GradioVTONClient),
+            ("Gradio HF Spaces",      "",                    GradioVTONClient if gradio_enabled else None),
             ("Segmind",               "SEGMIND_API_KEY",     SegmindVTONClient),
         ]
 
         for name, env_var, klass in configs:
+            if klass is None:
+                logger.info("⏭ Skipping %s (disabled via env var)", name)
+                continue
             if env_var and not os.getenv(env_var):
                 continue
             try:
