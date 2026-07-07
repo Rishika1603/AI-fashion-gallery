@@ -1,0 +1,22 @@
+# Minimal Railway deployment deps — avoid free-plan resource caps.
+# Heavy ML libs (torch, transformers, sentence-transformers, ragas, langgraph,
+# langchain) are intentionally excluded. Image search will report 503 in
+# production; other endpoints (chat, products, fashn, try-on admin) work.
+
+# Core API
+fastapi~=0.118.0
+uvicorn~=0.37.0
+python-multipart~=0.0.20
+python-dotenv~=1.1.1
+pydantic~=2.11.9
+aiofiles~=24.1.0
+slowapi~=0.1.9
+sqlalchemy~=2.0.43
+Pillow~=12.0.0
+
+# HTTP
+requests~=2.32.5
+httpx~=0.28.1
+
+# Virtual Try-On (gradio_client only — no torch needed)
+gradio_client~=2.0.3
