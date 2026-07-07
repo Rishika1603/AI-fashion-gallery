@@ -1,297 +1,334 @@
+"""
+Virtual Try-On Service — Multi-backend support.
+
+Priority order (configured via env vars):
+  1. Replicate (IDM-VTON) — best quality, $5 free credits → REPLICATE_API_TOKEN
+  2. Fashn.ai — 25 free credits/month → FASHN_API_KEY
+  3. Gradio HF Spaces (free, IDM-VTON) — no key needed, may be queued
+  4. Segmind — needs $0.01/call credit top-up → SEGMIND_API_KEY
+
+Only enabled backends that are configured. When multiple are configured,
+the first available one in the priority order above is used.
+"""
+
 import os
 import io
-import tempfile
 import logging
-import traceback
+import base64
 from pathlib import Path
-from PIL import Image, ImageFilter
+from typing import Optional
+from PIL import Image
 from dotenv import load_dotenv
 
-try:
-    from gradio_client import Client, handle_file
-    GRADIO_AVAILABLE = True
-except ImportError:
-    GRADIO_AVAILABLE = False
+# Load both .env files — opentryon/.env (Segmind keys) and backend/.env (HF_TOKEN, etc.)
+env_dir = Path(__file__).resolve().parent.parent
+load_dotenv(env_dir / "opentryon" / ".env")
+load_dotenv(env_dir / "backend" / ".env")
 
-try:
-    from opentryon.tryon.api.segmind import SegmindVTONAdapter
-    SEGMIND_AVAILABLE = True
-except Exception:
-    SEGMIND_AVAILABLE = False
-
-# Load env from opentryon as fallback for Segmind key
-load_dotenv(Path(__file__).resolve().parent.parent / "opentryon" / ".env")
-
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def _load_segmind_adapter():
-    if not SEGMIND_AVAILABLE:
-        return None
-    api_key = os.getenv("SEGMIND_API_KEY")
-    if not api_key:
-        return None
-    try:
-        return SegmindVTONAdapter(api_key=api_key)
-    except Exception:
-        return None
+# ── helpers ──────────────────────────────────────────────────────────
 
+def _encode_base64(img: Image.Image, fmt: str = "PNG") -> str:
+    """Return a raw base64 string (no data: URI prefix)."""
+    with io.BytesIO() as buf:
+        img.save(buf, format=fmt)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _resize(img: Image.Image, max_size: int = 1024) -> Image.Image:
+    w, h = img.size
+    if w >= h and w > max_size:
+        nw = max_size
+        nh = max(1, (max_size * h) // w)
+        return img.resize((nw, nh), Image.Resampling.LANCZOS)
+    if h > w and h > max_size:
+        nh = max_size
+        nw = max(1, (max_size * w) // h)
+        return img.resize((nw, nh), Image.Resampling.LANCZOS)
+    return img
+
+
+# ── Backend: Replicate (IDM-VTON) ────────────────────────────────────
+
+class ReplicateVTONClient:
+    """IDM-VTON via Replicate. Requires REPLICATE_API_TOKEN env var."""
+
+    MODEL = "yisol/idm-vton:6d7eba65b6e18b6e9d0339ae14eae0d6bbf3e48c6e9e7b6a3b0c3b7b5f6a0b7"
+
+    def __init__(self, api_token: str | None = None):
+        self.api_token = api_token or os.getenv("REPLICATE_API_TOKEN")
+        if not self.api_token:
+            raise RuntimeError(
+                "REPLICATE_API_TOKEN is required. Get one at https://replicate.com/account"
+            )
+        import replicate
+        self._client = replicate.Client(api_token=self.api_token)
+
+    def generate(self, person: Image.Image, garment: Image.Image) -> Image.Image:
+        person_b64 = _encode_base64(person)
+        garment_b64 = _encode_base64(garment)
+        logger.info("Calling Replicate IDM-VTON ...")
+        output = self._client.run(
+            self.MODEL,
+            input={
+                "human_image": f"data:image/png;base64,{person_b64}",
+                "garment_image": f"data:image/png;base64,{garment_b64}",
+                "category": "upper_body",
+            },
+        )
+        if not output or not isinstance(output, list):
+            raise RuntimeError(f"Replicate returned unexpected output: {output}")
+        url = output[0]
+        import requests
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        return Image.open(io.BytesIO(resp.content)).convert("RGB")
+
+
+# ── Backend: Fashn.ai ────────────────────────────────────────────────
+
+class FashnVTONClient:
+    """Virtual Try-On via Fashn.ai. Requires FASHN_API_KEY env var."""
+
+    ENDPOINT = "https://api.fashn.ai/v1/run"
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.getenv("FASHN_API_KEY")
+        if not self.api_key:
+            raise RuntimeError(
+                "FASHN_API_KEY is required. Get one at https://www.fashn.ai/"
+            )
+
+    def generate(self, person: Image.Image, garment: Image.Image) -> Image.Image:
+        person_b64 = _encode_base64(person)
+        garment_b64 = _encode_base64(garment)
+        logger.info("Calling Fashn.ai ...")
+        import requests
+
+        resp = requests.post(
+            self.ENDPOINT,
+            headers={"api-key": self.api_key},
+            json={
+                "model_image": f"data:image/png;base64,{person_b64}",
+                "garment_image": f"data:image/png;base64,{garment_b64}",
+                "category": "upper_body",
+                "mode": "quality",
+            },
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"Fashn.ai returned {resp.status_code}: {resp.text[:500]}"
+            )
+        data = resp.json()
+
+        # Poll if status_url returned
+        status_url = data.get("status_url")
+        if not status_url:
+            if "output" in data:
+                out_url = data["output"]
+                if isinstance(out_url, list):
+                    out_url = out_url[0]
+                return self._fetch_image(out_url)
+            raise RuntimeError(f"Fashn.ai unexpected response: {data}")
+
+        import time
+        for _ in range(120):
+            poll = requests.get(status_url, timeout=30)
+            poll_data = poll.json()
+            status = poll_data.get("status", "")
+            if status == "completed":
+                out_url = poll_data.get("output")
+                if isinstance(out_url, list):
+                    out_url = out_url[0]
+                return self._fetch_image(out_url)
+            if status in ("failed", "error"):
+                raise RuntimeError(
+                    f"Fashn.ai generation failed: {poll_data.get('error', 'unknown')}"
+                )
+            time.sleep(2)
+        raise RuntimeError("Fashn.ai timed out after 2 minutes")
+
+    @staticmethod
+    def _fetch_image(url: str) -> Image.Image:
+        import requests
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        return Image.open(io.BytesIO(resp.content)).convert("RGB")
+
+
+# ── Backend: Gradio HF Spaces (free, no key needed) ──────────────────
+
+class GradioVTONClient:
+    """Free virtual try-on via Hugging Face Spaces (gradio_client).
+
+    Uses IDM-VTON (yisol/IDM-VTON) — excellent quality, supports
+    auto-masking. Free but may have queue delays.
+    """
+
+    SPACE = "yisol/IDM-VTON"
+
+    def __init__(self, hf_token: str | None = None):
+        self.hf_token = hf_token or os.getenv("HF_TOKEN")
+        from gradio_client import Client, handle_file
+        logger.info("Connecting to HF Space %s ...", self.SPACE)
+        self._client = Client(self.SPACE, token=self.hf_token)
+        self._handle_file = handle_file
+
+    def generate(
+        self, person: Image.Image, garment: Image.Image
+    ) -> Image.Image:
+        person_path = f"/tmp/hf_vton_person_{os.getpid()}.png"
+        garment_path = f"/tmp/hf_vton_garment_{os.getpid()}.png"
+        person.save(person_path, format="PNG")
+        garment.save(garment_path, format="PNG")
+
+        try:
+            logger.info("Calling IDM-VTON on HF Spaces ...")
+            result = self._client.predict(
+                dict={
+                    "background": self._handle_file(person_path),
+                    "layers": [],
+                    "composite": None,
+                },
+                garm_img=self._handle_file(garment_path),
+                garment_des="",
+                is_checked=True,
+                is_checked_crop=False,
+                denoise_steps=30,
+                seed=42,
+                api_name="/tryon",
+            )
+            output = result[0] if isinstance(result, (list, tuple)) else result
+            if isinstance(output, str) and os.path.exists(output):
+                return Image.open(output).convert("RGB")
+            raise RuntimeError(f"Gradio VTON unexpected result: {output}")
+        finally:
+            for p in (person_path, garment_path):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+
+# ── Backend: Segmind (existing, kept as option) ──────────────────────
+
+class SegmindVTONClient:
+    """Segmind Try-On Diffusion API. Needs credit top-up at cloud.segmind.com."""
+
+    ENDPOINT = "https://api.segmind.com/v1/try-on-diffusion"
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.getenv("SEGMIND_API_KEY")
+        if not self.api_key:
+            raise RuntimeError(
+                "SEGMIND_API_KEY is required. Set it in opentryon/.env"
+            )
+
+    def generate(self, person: Image.Image, garment: Image.Image) -> Image.Image:
+        payload = {
+            "model_image": _encode_base64(person),
+            "cloth_image": _encode_base64(garment),
+            "category": "Upper body",
+            "base64": True,
+        }
+        logger.info("Calling Segmind Try-On Diffusion ...")
+        import requests
+        resp = requests.post(
+            self.ENDPOINT,
+            headers={"x-api-key": self.api_key},
+            json=payload,
+            timeout=300,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"Segmind returned {resp.status_code}: {resp.text[:500]}"
+            )
+        data = resp.json()
+        images = data.get("image", [])
+        if isinstance(images, str):
+            images = [images]
+        if not images:
+            raise RuntimeError("Segmind returned no images.")
+        first = images[0]
+        if isinstance(first, str):
+            if first.startswith("data:"):
+                first = first.split(",", 1)[1]
+            return Image.open(io.BytesIO(base64.b64decode(first))).convert("RGB")
+        raise RuntimeError(f"Unexpected Segmind result type: {type(first)}")
+
+
+# ── TryOnService ─────────────────────────────────────────────────────
 
 class TryOnService:
-    def __init__(self):
-        self.client = None
-        self.current_space = None
-        self.is_mock = not GRADIO_AVAILABLE
-        self.segmind = _load_segmind_adapter()
+    """Virtual Try-On service with automatic backend selection.
 
-        # List of free virtual try-on spaces (in priority order)
-        self.spaces = [
-            "Kwai-Kolors/Kolors-Virtual-Try-On",  # Best quality, recommended
-            "levihsu/OOTDiffusion",  # Good for full-body
+    Backend priority (first configured wins):
+      1. Replicate (IDM-VTON, best quality, $5 free credits)
+      2. Fashn.ai (25 free credits/month)
+      3. Gradio HF Spaces (free, IDM-VTON via HF)
+      4. Segmind (needs top-up)
+
+    Only one backend is active at a time.
+    """
+
+    def __init__(self) -> None:
+        self._client = None
+        self._backend_name = None
+
+        configs: list[tuple[str, str, type]] = [
+            ("Replicate (IDM-VTON)",  "REPLICATE_API_TOKEN", ReplicateVTONClient),
+            ("Fashn.ai",              "FASHN_API_KEY",       FashnVTONClient),
+            ("Gradio HF Spaces",      "",                    GradioVTONClient),
+            ("Segmind",               "SEGMIND_API_KEY",     SegmindVTONClient),
         ]
 
-        if self.segmind is None:
-            if not self.is_mock:
-                self._connect_to_any_space()
-            else:
-                logger.warning("gradio_client not installed. No Segmind key. Running in MOCK mode.")
-        else:
-            logger.info("Segmind try-on adapter configured.")
-
-    def _connect_to_any_space(self):
-        """Try connecting to any available space"""
-        for space_id in self.spaces:
+        for name, env_var, klass in configs:
+            if env_var and not os.getenv(env_var):
+                continue
             try:
-                logger.info(f"Attempting to connect to {space_id}...")
-                client = Client(space_id)
-                # Test connection
-                logger.info(f"Successfully connected to {space_id}!")
-                self.client = client
-                self.current_space = space_id
+                self._client = klass()
+                self._backend_name = name
+                logger.info("✅ Try-On backend active: %s", name)
                 return
             except Exception as e:
-                logger.warning(f"Failed to connect to {space_id}: {e}")
-                continue
+                logger.debug("Backend %s not available: %s", name, e)
 
-        # If all spaces fail
-        logger.error("Failed to connect to any virtual try-on space")
-        logger.warning("Falling back to MOCK mode")
-        self.is_mock = True
-        self.client = None
+        logger.warning("❌ No VTON backend could be initialised.")
 
-    def _prepare_image(self, img, max_size=1024):
-        """
-        Prepare image with proper aspect ratio preservation
-        """
-        # Get original dimensions
-        width, height = img.size
+    @property
+    def available(self) -> bool:
+        return self._client is not None
 
-        # Calculate scaling to fit within max_size while preserving aspect ratio
-        if width > height:
-            if width > max_size:
-                new_width = max_size
-                new_height = int((max_size / width) * height)
-            else:
-                new_width, new_height = width, height
-        else:
-            if height > max_size:
-                new_height = max_size
-                new_width = int((max_size / height) * width)
-            else:
-                new_width, new_height = width, height
+    def process_tryon(
+        self,
+        person_image_bytes: bytes,
+        garment_image_bytes: bytes,
+    ) -> bytes:
+        if self._client is None:
+            raise RuntimeError(
+                "Try-On service is unavailable. "
+                "Set REPLICATE_API_TOKEN, FASHN_API_KEY, or SEGMIND_API_KEY, "
+                "or the free Gradio HF Spaces backend is also available."
+            )
 
-        # Resize with high-quality resampling
-        if (new_width, new_height) != (width, height):
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-        return img
-
-    def process_tryon(self, person_image_bytes, garment_image_bytes):
-        """
-        Process the virtual try-on request.
-        Returns bytes of the result image.
-        """
-        logger.info("Processing Try-On request...")
-
-        # Load images
         person_img = Image.open(io.BytesIO(person_image_bytes)).convert("RGB")
         garment_img = Image.open(io.BytesIO(garment_image_bytes)).convert("RGB")
 
-        if self.segmind is not None:
-            try:
-                return self._segmind_tryon(person_img, garment_img)
-            except Exception as e:
-                logger.error(f"Segmind try-on failed: {e}")
-                if not self.is_mock or self.client is None:
-                    raise
+        person_img = _resize(person_img, max_size=1024)
+        garment_img = _resize(garment_img, max_size=768)
 
-        if self.is_mock or self.client is None:
-            logger.info("Running in MOCK mode - returning simple overlay")
-            return self._mock_tryon(person_img, garment_img)
+        logger.info("Processing Try-On via %s ...", self._backend_name)
+        result_img = self._client.generate(person_img, garment_img)
 
-        try:
-            # Prepare images with proper aspect ratio
-            person_img = self._prepare_image(person_img, max_size=1024)
-            garment_img = self._prepare_image(garment_img, max_size=768)
+        buf = io.BytesIO()
+        result_img.save(buf, format="PNG")
+        logger.info("Try-On completed via %s.", self._backend_name)
+        return buf.getvalue()
 
-            # Save images to temporary files (required by Gradio Client)
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as person_file:
-                person_img.save(person_file, format='PNG', quality=95)
-                person_path = person_file.name
 
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as garment_file:
-                garment_img.save(garment_file, format='PNG', quality=95)
-                garment_path = garment_file.name
-
-            try:
-                logger.info(f"Sending request to {self.current_space}...")
-
-                # Call the Gradio API
-                # Kolors/IDM-VTON usually use (person_image, garment_image)
-                result = self.client.predict(
-                    handle_file(person_path),  # Person image
-                    handle_file(garment_path),  # Garment image
-                    api_name="/tryon" if "Kolors" in self.current_space else "/process",
-                )
-
-                logger.info(f"Received result from IDM-VTON: type={type(result)}, value={result}")
-
-                # Result is typically a tuple: (result_image_path, masked_image_path)
-                # Handle different return formats
-                try:
-                    if isinstance(result, tuple) and len(result) > 0:
-                        result_image_path = result[0]
-                        logger.info(f"Extracted from tuple: {result_image_path}")
-                    elif isinstance(result, str):
-                        result_image_path = result
-                        logger.info(f"Direct string result: {result_image_path}")
-                    elif isinstance(result, dict):
-                        # Sometimes Gradio returns a dict with file info
-                        if 'path' in result:
-                            result_image_path = result['path']
-                        elif 'name' in result:
-                            result_image_path = result['name']
-                        else:
-                            logger.error(f"Dict result without path/name: {result}")
-                            raise Exception(f"Unexpected dict format: {result}")
-                        logger.info(f"Extracted from dict: {result_image_path}")
-                    else:
-                        logger.error(f"Unexpected result format: type={type(result)}, value={result}")
-                        raise Exception(f"Unexpected API response format: {type(result)}")
-
-                    # Read the result image
-                    logger.info(f"Attempting to read file: {result_image_path}")
-                    with open(result_image_path, 'rb') as f:
-                        result_bytes = f.read()
-                except AttributeError as ae:
-                    logger.error(f"AttributeError details: {ae}, result type: {type(result)}, result: {result}")
-                    raise
-
-                # Clean up temp files
-                try:
-                    os.unlink(person_path)
-                    os.unlink(garment_path)
-                except:
-                    pass
-
-                logger.info("Successfully processed try-on!")
-                return result_bytes
-
-            except Exception as e:
-                # Clean up temp files on error
-                try:
-                    if os.path.exists(person_path):
-                        os.unlink(person_path)
-                    if os.path.exists(garment_path):
-                        os.unlink(garment_path)
-                except:
-                    pass
-                raise e
-
-        except Exception as e:
-            logger.error(f"Gradio API error: {type(e).__name__}: {str(e)}")
-            logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            logger.warning("Falling back to MOCK mode for this request")
-            return self._mock_tryon(person_img, garment_img)
-
-    def _segmind_tryon(self, person_img, garment_img):
-        person_img = self._prepare_image(person_img, max_size=1024)
-        garment_img = self._prepare_image(garment_img, max_size=768)
-
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as person_file:
-            person_img.save(person_file, format='PNG')
-            person_path = person_file.name
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as garment_file:
-            garment_img.save(garment_file, format='PNG')
-            garment_path = garment_file.name
-
-        try:
-            images = self.segmind.generate_and_decode(
-                model_image=person_path,
-                cloth_image=garment_path,
-                category="Upper body",
-            )
-            buf = io.BytesIO()
-            images[0].save(buf, format='PNG')
-            return buf.getvalue()
-        finally:
-            try:
-                os.unlink(person_path)
-                os.unlink(garment_path)
-            except Exception:
-                pass
-
-    def _mock_tryon(self, person_img, garment_img):
-        """Improved mock: remove garment background and blend into person image."""
-        import time
-        time.sleep(2)  # Simulate processing
-
-        person = self._prepare_image(person_img, max_size=1024).convert("RGBA")
-        garment = self._prepare_image(garment_img, max_size=768).convert("RGBA")
-
-        # Remove garment background using simple color-distance heuristic
-        garment_no_bg = self._remove_background(garment)
-
-        # Determine placement region based on garment aspect ratio
-        pw, ph = person.size
-        gw, gh = garment_no_bg.size
-        max_w = int(pw * 0.75)
-        scale = min(1.0, max(1, max_w) / max(1, gw))
-        new_gw = max(1, int(gw * scale))
-        new_gh = max(1, int(gh * scale))
-        garment_resized = garment_no_bg.resize((new_gw, new_gh), Image.Resampling.LANCZOS)
-
-        # Default placement: center-bottom (torso)
-        x = (pw - new_gw) // 2
-        y = int(ph * 0.25)
-
-        # Soft feathered paste using alpha channel
-        person_rgba = person.copy()
-        garment_rgba = garment_resized.copy()
-        person_rgba.paste(garment_rgba, (x, y), garment_rgba)
-
-        out = person_rgba.convert("RGB")
-        output_buffer = io.BytesIO()
-        out.save(output_buffer, format="PNG")
-        return output_buffer.getvalue()
-
-    def _remove_background(self, img: Image.Image) -> Image.Image:
-        """Simple background removal using white/light-color thresholding."""
-        img = img.convert("RGBA")
-        datas = img.getdata()
-        new_data = []
-        for item in datas:
-            r, g, b, a = item
-            brightness = (r + g + b) / 3
-            if brightness > 230 and r > 200 and g > 200 and b > 200:
-                # Likely white background -> transparent
-                new_data.append((r, g, b, 0))
-            else:
-                new_data.append((r, g, b, a))
-        img.putdata(new_data)
-        return img
-
-# Initialize the service
+# Singleton
 tryon_service = TryOnService()

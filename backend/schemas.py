@@ -45,3 +45,25 @@ class ChatRequest(BaseModel):
 class ChatHistoryResponse(BaseModel):
     messages: List[ChatMessageSchema]
 
+# ── Try-On Request Schemas ────────────────────────────────────────────
+
+class TryOnRequestCreate(BaseModel):
+    session_id: str
+
+class TryOnRequestOut(BaseModel):
+    id: int
+    session_id: str
+    status: str
+    admin_note: Optional[str] = None
+    result_url: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class AdminLoginRequest(BaseModel):
+    password: str
+
+class AdminRejectRequest(BaseModel):
+    note: Optional[str] = None
+

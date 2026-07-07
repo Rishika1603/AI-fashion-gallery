@@ -1,0 +1,10 @@
+node_modules
+.pnpm-store
+.yarn
+.venv
+__pycache__
+*.pyc
+*.db
+.DS_Store
+.git
+dist

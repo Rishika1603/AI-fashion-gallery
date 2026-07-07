@@ -21,12 +21,16 @@ import io
 
 # Database imports
 from .database import engine, Base, get_db
-from .models import Product, ChatMessage
+from .models import Product, ChatMessage, TryOnRequest
 from .schemas import (
     ProductSchema,
     SearchResult,
     PaginatedProducts,
     ChatHistoryResponse,
+    TryOnRequestCreate,
+    TryOnRequestOut,
+    AdminLoginRequest,
+    AdminRejectRequest,
 )
 from pydantic import BaseModel
 from PIL import Image
@@ -68,6 +72,15 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 app.mount("/static/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+# Upload directory for try-on request images
+TRYON_UPLOAD_DIR = "tryon_uploads"
+if not os.path.exists(TRYON_UPLOAD_DIR):
+    os.makedirs(TRYON_UPLOAD_DIR)
+
+# Serve try-on results
+os.makedirs("tryon_results", exist_ok=True)
+app.mount("/static/tryon_results", StaticFiles(directory="tryon_results"), name="tryon_results")
+
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
@@ -96,14 +109,21 @@ except Exception as e:
 # Try-On Service Import (Safe)
 try:
     from .tryon import tryon_service
-    try_on_available = True
+    try_on_available = tryon_service.available
 except Exception as e:
     logger.warning(f"Virtual Try-On service could not be loaded: {e}")
     try_on_available = False
-    class DummyTryOn:
-        def process_tryon(self, u, g):
-            raise HTTPException(status_code=503, detail="Try-On service unavailable")
-    tryon_service = DummyTryOn()
+    tryon_service = None
+
+# Fashn.ai Comprehensive Service
+try:
+    from .fashn_service import get_fashn_client
+    _fashn_client = get_fashn_client()
+    fashn_available = _fashn_client is not None
+except Exception as e:
+    logger.warning(f"Fashn.ai service could not be loaded: {e}")
+    fashn_available = False
+    _fashn_client = None
 
 # Chatbot
 try:
@@ -408,6 +428,623 @@ async def get_chat_history(session_id: str, db: Session = Depends(get_db)):
         .all()
     )
     return {"messages": messages}
+
+
+# ── Fashn.ai Comprehensive Feature Routes ────────────────────────────
+
+from .fashn_service import FashnAIClient, get_fashn_client
+from fastapi import UploadFile, File, Form
+from typing import List as TypingList
+
+
+def _fashn_guard():
+    """Raise 503 if Fashn.ai client is unavailable."""
+    client = get_fashn_client()
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Fashn.ai service unavailable. Set FASHN_API_KEY in .env",
+        )
+    return client
+
+
+async def _read_image(file: UploadFile = None, url: str = None) -> Optional[bytes]:
+    """Read image from either an uploaded file or a URL string."""
+    if file and file.filename:
+        return await file.read()
+    if url:
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                return resp.content
+            raise HTTPException(status_code=400, detail=f"Could not fetch image from URL: {url}")
+    return None
+
+
+# ── Status ────────────────────────────────────────────────────────────
+
+@app.get("/api/fashn/status")
+async def fashn_status():
+    """Check Fashn.ai availability and list capabilities."""
+    client = get_fashn_client()
+    return {
+        "available": client is not None,
+        "features": [
+            "tryon-max",
+            "product-to-model",
+            "face-to-model",
+            "model-create",
+            "edit",
+            "reframe",
+            "image-to-video",
+            "background-remove",
+        ],
+    }
+
+
+# ── Try-On Max ────────────────────────────────────────────────────────
+
+class FashnTryOnRequest(BaseModel):
+    garment_url: Optional[str] = None
+    model_url: Optional[str] = None
+    prompt: Optional[str] = None
+    resolution: str = "1k"
+    generation_mode: Optional[str] = None
+    num_images: int = 1
+    output_format: str = "png"
+    return_base64: bool = False
+
+
+@app.post("/api/fashn/tryon")
+@limiter.limit("10/minute")
+async def fashn_tryon(
+    request: Request,
+    garment_file: UploadFile = File(None),
+    model_file: UploadFile = File(None),
+    garment_url: str = Form(None),
+    model_url: str = Form(None),
+    prompt: str = Form(None),
+    resolution: str = Form("1k"),
+    generation_mode: str = Form(None),
+    num_images: int = Form(1),
+    output_format: str = Form("png"),
+    return_base64: bool = Form(False),
+):
+    """Virtual Try-On Max — place garment on a model."""
+    client = _fashn_guard()
+    garment = await _read_image(garment_file, garment_url)
+    model = await _read_image(model_file, model_url)
+    if not garment or not model:
+        raise HTTPException(status_code=400, detail="Both garment and model images are required")
+    result = await client.try_on(
+        product_image=garment,
+        model_image=model,
+        prompt=prompt,
+        resolution=resolution,
+        generation_mode=generation_mode,
+        num_images=num_images,
+        output_format=output_format,
+        return_base64=return_base64,
+    )
+    return Response(content=result, media_type=f"image/{output_format}")
+
+
+# ── Product to Model ─────────────────────────────────────────────────
+
+class ProductToModelRequest(BaseModel):
+    product_url: Optional[str] = None
+    prompt: Optional[str] = None
+    face_reference_url: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    resolution: str = "1k"
+    generation_mode: Optional[str] = None
+    num_images: int = 1
+    output_format: str = "png"
+
+
+@app.post("/api/fashn/product-to-model")
+@limiter.limit("10/minute")
+async def fashn_product_to_model(
+    request: Request,
+    product_file: UploadFile = File(None),
+    product_url: str = Form(None),
+    prompt: str = Form(None),
+    face_reference_file: UploadFile = File(None),
+    face_reference_url: str = Form(None),
+    aspect_ratio: str = Form(None),
+    resolution: str = Form("1k"),
+    generation_mode: str = Form(None),
+    num_images: int = Form(1),
+    output_format: str = Form("png"),
+):
+    """Product to Model — generate a model wearing the product."""
+    client = _fashn_guard()
+    product = await _read_image(product_file, product_url)
+    if not product:
+        raise HTTPException(status_code=400, detail="Product image is required")
+    face_ref = await _read_image(face_reference_file, face_reference_url) if face_reference_file or face_reference_url else None
+    result = await client.product_to_model(
+        product_image=product,
+        prompt=prompt,
+        face_reference=face_ref,
+        aspect_ratio=aspect_ratio or None,
+        resolution=resolution,
+        generation_mode=generation_mode,
+        num_images=num_images,
+        output_format=output_format,
+    )
+    return Response(content=result, media_type=f"image/{output_format}")
+
+
+# ── Face to Model ────────────────────────────────────────────────────
+
+class FaceToModelRequest(BaseModel):
+    face_url: Optional[str] = None
+    prompt: Optional[str] = None
+    aspect_ratio: str = "2:3"
+    resolution: str = "1k"
+    generation_mode: Optional[str] = None
+    num_images: int = 1
+    output_format: str = "jpeg"
+
+
+@app.post("/api/fashn/face-to-model")
+@limiter.limit("10/minute")
+async def fashn_face_to_model(
+    request: Request,
+    face_file: UploadFile = File(None),
+    face_url: str = Form(None),
+    prompt: str = Form(None),
+    aspect_ratio: str = Form("2:3"),
+    resolution: str = Form("1k"),
+    generation_mode: str = Form(None),
+    num_images: int = Form(1),
+    output_format: str = Form("jpeg"),
+):
+    """Face to Model — transform a face/headshot into an upper-body avatar."""
+    client = _fashn_guard()
+    face = await _read_image(face_file, face_url)
+    if not face:
+        raise HTTPException(status_code=400, detail="Face image is required")
+    result = await client.face_to_model(
+        face_image=face,
+        prompt=prompt,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        generation_mode=generation_mode,
+        num_images=num_images,
+        output_format=output_format,
+    )
+    return Response(content=result, media_type=f"image/{output_format}")
+
+
+# ── Model Create ─────────────────────────────────────────────────────
+
+class ModelCreateRequest(BaseModel):
+    model_name: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+@app.post("/api/fashn/model-create")
+@limiter.limit("10/minute")
+async def fashn_model_create(
+    request: Request,
+    image_file: UploadFile = File(None),
+    image_url: str = Form(None),
+    model_name: str = Form(None),
+):
+    """Create an AI model from model photos for use in virtual try-ons."""
+    client = _fashn_guard()
+    img = await _read_image(image_file, image_url)
+    if not img:
+        raise HTTPException(status_code=400, detail="Model image is required")
+    result = await client.model_create(
+        model_image=img,
+        model_name=model_name,
+    )
+    return {"prediction_id": result.get("id"), "status": result.get("status", "processing")}
+
+
+# ── Edit ─────────────────────────────────────────────────────────────
+
+class EditRequest(BaseModel):
+    image_url: Optional[str] = None
+    prompt: str
+    mask_url: Optional[str] = None
+    resolution: str = "1k"
+    generation_mode: Optional[str] = None
+    num_images: int = 1
+    output_format: str = "png"
+
+
+@app.post("/api/fashn/edit")
+@limiter.limit("10/minute")
+async def fashn_edit(
+    request: Request,
+    image_file: UploadFile = File(None),
+    image_url: str = Form(None),
+    prompt: str = Form(...),
+    mask_file: UploadFile = File(None),
+    mask_url: str = Form(None),
+    resolution: str = Form("1k"),
+    generation_mode: str = Form(None),
+    num_images: int = Form(1),
+    output_format: str = Form("png"),
+):
+    """Edit — restyle / adjust / fix details while preserving subject identity."""
+    client = _fashn_guard()
+    img = await _read_image(image_file, image_url)
+    if not img:
+        raise HTTPException(status_code=400, detail="Image is required")
+    mask = await _read_image(mask_file, mask_url) if mask_file or mask_url else None
+    result = await client.edit(
+        image=img,
+        prompt=prompt,
+        mask=mask,
+        resolution=resolution,
+        generation_mode=generation_mode,
+        num_images=num_images,
+        output_format=output_format,
+    )
+    return Response(content=result, media_type=f"image/{output_format}")
+
+
+# ── Reframe (Change Aspect Ratio) ────────────────────────────────────
+
+class ReframeRequest(BaseModel):
+    image_url: Optional[str] = None
+    aspect_ratio: str = "1:1"
+    resolution: str = "1k"
+    generation_mode: Optional[str] = None
+    num_images: int = 1
+    output_format: str = "png"
+
+
+@app.post("/api/fashn/reframe")
+@limiter.limit("10/minute")
+async def fashn_reframe(
+    request: Request,
+    image_file: UploadFile = File(None),
+    image_url: str = Form(None),
+    aspect_ratio: str = Form("1:1"),
+    resolution: str = Form("1k"),
+    generation_mode: str = Form(None),
+    num_images: int = Form(1),
+    output_format: str = Form("png"),
+):
+    """Reframe — change aspect ratio by smart crop or out-paint."""
+    client = _fashn_guard()
+    img = await _read_image(image_file, image_url)
+    if not img:
+        raise HTTPException(status_code=400, detail="Image is required")
+    result = await client.reframe(
+        image=img,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        generation_mode=generation_mode,
+        num_images=num_images,
+        output_format=output_format,
+    )
+    return Response(content=result, media_type=f"image/{output_format}")
+
+
+# ── Image to Video ───────────────────────────────────────────────────
+
+class ImageToVideoRequest(BaseModel):
+    image_url: Optional[str] = None
+    prompt: Optional[str] = None
+    duration: int = 5
+    resolution: str = "720p"
+
+
+@app.post("/api/fashn/image-to-video")
+@limiter.limit("5/minute")
+async def fashn_image_to_video(
+    request: Request,
+    image_file: UploadFile = File(None),
+    image_url: str = Form(None),
+    prompt: str = Form(None),
+    duration: int = Form(5),
+    resolution: str = Form("720p"),
+):
+    """Image to Video — animate a still image into a short MP4 clip."""
+    client = _fashn_guard()
+    img = await _read_image(image_file, image_url)
+    if not img:
+        raise HTTPException(status_code=400, detail="Image is required")
+    result_url = await client.image_to_video(
+        image=img,
+        prompt=prompt,
+        duration=duration,
+        resolution=resolution,
+    )
+    return {"video_url": result_url}
+
+
+# ── Background Remove ────────────────────────────────────────────────
+
+class BackgroundRemoveRequest(BaseModel):
+    image_url: Optional[str] = None
+    return_base64: bool = False
+
+
+@app.post("/api/fashn/background-remove")
+@limiter.limit("20/minute")
+async def fashn_background_remove(
+    request: Request,
+    image_file: UploadFile = File(None),
+    image_url: str = Form(None),
+    return_base64: bool = Form(False),
+):
+    """Background Remove — remove background, return transparent PNG."""
+    client = _fashn_guard()
+    img = await _read_image(image_file, image_url)
+    if not img:
+        raise HTTPException(status_code=400, detail="Image is required")
+    result = await client.background_remove(
+        image=img,
+        return_base64=return_base64,
+    )
+    return Response(content=result, media_type="image/png")
+
+
+# ── Feature discovery ────────────────────────────────────────────────
+
+@app.get("/api/fashn/features")
+async def fashn_features():
+    """Return detailed info about each available Fashn.ai feature."""
+    return {
+        "features": [
+            {
+                "id": "tryon-max",
+                "name": "Virtual Try-On Max",
+                "description": "Place a product (garment, accessory) on a model image with enhanced fidelity",
+                "inputs": ["garment_image", "model_image", "prompt", "resolution", "generation_mode"],
+                "lifecycle": "preview",
+            },
+            {
+                "id": "product-to-model",
+                "name": "Product to Model",
+                "description": "Generate a model wearing the product from product photo alone",
+                "inputs": ["product_image", "prompt", "face_reference", "aspect_ratio"],
+                "lifecycle": "preview",
+            },
+            {
+                "id": "face-to-model",
+                "name": "Face to Model",
+                "description": "Transform a face/headshot into a try-on ready upper-body avatar",
+                "inputs": ["face_image", "prompt", "aspect_ratio"],
+                "lifecycle": "experimental",
+            },
+            {
+                "id": "model-create",
+                "name": "Model Create",
+                "description": "Create an AI model from model photos for virtual try-ons",
+                "inputs": ["model_image", "name"],
+                "lifecycle": "experimental",
+            },
+            {
+                "id": "edit",
+                "name": "Edit",
+                "description": "Restyle shots, adjust views, fix details while preserving identity and product",
+                "inputs": ["image", "prompt", "mask", "image_context"],
+                "lifecycle": "experimental",
+            },
+            {
+                "id": "reframe",
+                "name": "Reframe",
+                "description": "Change aspect ratio by smart crop or out-paint",
+                "inputs": ["image", "aspect_ratio"],
+                "lifecycle": "experimental",
+            },
+            {
+                "id": "image-to-video",
+                "name": "Image to Video",
+                "description": "Create short MP4 videos from a single image",
+                "inputs": ["image", "duration", "resolution"],
+                "lifecycle": "experimental",
+            },
+            {
+                "id": "background-remove",
+                "name": "Background Remove",
+                "description": "Remove image background to transparent PNG",
+                "inputs": ["image"],
+                "lifecycle": "experimental",
+            },
+        ],
+        "excluded_features": ["model-swap"],
+    }
+
+# ── Admin Configuration ───────────────────────────────────────────────
+
+ADMIN_KEY = os.getenv("ADMIN_KEY", "admin123")  # Change in production!
+from fastapi import Header, Depends, HTTPException, status
+
+async def verify_admin(authorization: str = Header(None, alias="Authorization")):
+    """Dependency to verify admin access via Bearer token."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or token != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin credentials")
+    return True
+
+# ── Try-On Request / Admin Approval Routes ────────────────────────────
+
+@app.post("/api/tryon/request", response_model=TryOnRequestOut)
+async def create_tryon_request(
+    session_id: str = Form(...),
+    person_image: UploadFile = File(...),
+    garment_image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """User submits a try-on request. Admin must approve before execution."""
+    # Save uploaded images
+    req_id = str(uuid.uuid4())[:8]
+    person_ext = Path(person_image.filename or "person.png").suffix or ".png"
+    garment_ext = Path(garment_image.filename or "garment.png").suffix or ".png"
+    person_path = os.path.join(TRYON_UPLOAD_DIR, f"{req_id}_person{person_ext}")
+    garment_path = os.path.join(TRYON_UPLOAD_DIR, f"{req_id}_garment{garment_ext}")
+
+    person_bytes = await person_image.read()
+    garment_bytes = await garment_image.read()
+    with open(person_path, "wb") as f:
+        f.write(person_bytes)
+    with open(garment_path, "wb") as f:
+        f.write(garment_bytes)
+
+    record = TryOnRequest(
+        session_id=session_id,
+        person_image_path=person_path,
+        garment_image_path=garment_path,
+        status="pending",
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    logger.info("Try-on request #%d created (session=%s)", record.id, session_id)
+    return record
+
+
+@app.get("/api/tryon/requests", response_model=List[TryOnRequestOut])
+async def list_user_requests(
+    session_id: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """List try-on requests for a given session."""
+    records = (
+        db.query(TryOnRequest)
+        .filter(TryOnRequest.session_id == session_id)
+        .order_by(TryOnRequest.created_at.desc())
+        .all()
+    )
+    result = []
+    for r in records:
+        result.append(TryOnRequestOut(
+            id=r.id,
+            session_id=r.session_id,
+            status=r.status,
+            admin_note=r.admin_note,
+            result_url=f"/static/tryon_results/{r.id}.png" if r.result_path and os.path.exists(r.result_path) else None,
+            created_at=r.created_at,
+        ))
+    return result
+
+
+@app.get("/api/admin/tryon/pending", response_model=List[TryOnRequestOut])
+async def admin_pending_requests(
+    _=Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin views all pending requests."""
+    records = (
+        db.query(TryOnRequest)
+        .filter(TryOnRequest.status == "pending")
+        .order_by(TryOnRequest.created_at.asc())
+        .all()
+    )
+    return [
+        TryOnRequestOut(
+            id=r.id,
+            session_id=r.session_id,
+            status=r.status,
+            admin_note=r.admin_note,
+            created_at=r.created_at,
+        )
+        for r in records
+    ]
+
+
+@app.get("/api/admin/tryon/request/{request_id}", response_model=TryOnRequestOut)
+async def admin_get_request_detail(
+    request_id: int,
+    _=Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin views full detail of a specific request (including image paths)."""
+    record = db.query(TryOnRequest).filter(TryOnRequest.id == request_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return TryOnRequestOut(
+        id=record.id,
+        session_id=record.session_id,
+        status=record.status,
+        admin_note=record.admin_note,
+        result_url=f"/static/tryon_results/{record.id}.png" if record.result_path and os.path.exists(record.result_path) else None,
+        created_at=record.created_at,
+    )
+
+
+@app.post("/api/admin/tryon/approve/{request_id}")
+async def admin_approve_tryon(
+    request_id: int,
+    _=Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin approves a try-on request — executes the try-on using free HF Space backend."""
+    record = db.query(TryOnRequest).filter(TryOnRequest.id == request_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if record.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request is already {record.status}")
+
+    # Execute try-on
+    if not try_on_available:
+        # Mark as rejected since no backend available
+        record.status = "rejected"
+        record.admin_note = "Try-On service is not available. Configure an API key."
+        db.commit()
+        raise HTTPException(status_code=503, detail="Try-On service unavailable")
+
+    try:
+        with open(record.person_image_path, "rb") as f:
+            person_bytes = f.read()
+        with open(record.garment_image_path, "rb") as f:
+            garment_bytes = f.read()
+
+        result_bytes = tryon_service.process_tryon(person_bytes, garment_bytes)
+
+        # Save result
+        os.makedirs("tryon_results", exist_ok=True)
+        result_path = f"tryon_results/{record.id}.png"
+        with open(result_path, "wb") as f:
+            f.write(result_bytes)
+
+        record.status = "completed"
+        record.result_path = os.path.abspath(result_path)
+        db.commit()
+        logger.info("Try-on request #%d approved and completed", request_id)
+        return {"status": "completed", "result_url": f"/static/tryon_results/{record.id}.png"}
+
+    except Exception as e:
+        logger.error(f"Try-on execution failed for request #{request_id}: {e}")
+        record.status = "rejected"
+        record.admin_note = f"Processing failed: {str(e)}"
+        db.commit()
+        return {"status": "failed", "error": str(e)}
+
+
+@app.post("/api/admin/tryon/reject/{request_id}")
+async def admin_reject_tryon(
+    request_id: int,
+    body: AdminRejectRequest,
+    _=Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin rejects a try-on request."""
+    record = db.query(TryOnRequest).filter(TryOnRequest.id == request_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if record.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request is already {record.status}")
+
+    record.status = "rejected"
+    record.admin_note = body.note or "Rejected by admin"
+    db.commit()
+    logger.info("Try-on request #%d rejected: %s", request_id, record.admin_note)
+    return {"status": "rejected", "note": record.admin_note}
+
 
 if __name__ == "__main__":
     import uvicorn

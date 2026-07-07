@@ -28,6 +28,9 @@ ragas>=0.4.3
 # Virtual Try-On
 gradio_client~=2.0.3
 
+# Orchestrator
+langgraph>=0.2.11
+
 # HTTP
 requests~=2.32.5
 httpx~=0.28.1

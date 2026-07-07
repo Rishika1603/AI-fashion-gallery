@@ -24,4 +24,24 @@ export interface PaginatedResponse {
     pages: number;
 }
 
-export type ScreenState = 'GALLERY' | 'UPLOADING' | 'RESULTS';
+export type ScreenState = 'GALLERY' | 'UPLOADING' | 'RESULTS' | 'FASHN_STUDIO';
+
+// ── Fashn.ai Types ──────────────────────────────────────────────────
+
+export interface FashnFeature {
+    id: string;
+    name: string;
+    description: string;
+    inputs: string[];
+    lifecycle: string;
+}
+
+export interface FashnStatusResponse {
+    available: boolean;
+    features: string[];
+}
+
+export interface FashnFeaturesResponse {
+    features: FashnFeature[];
+    excluded_features: string[];
+}
