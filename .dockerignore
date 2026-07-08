@@ -1,0 +1,53 @@
+# Keep Railway build context + image lean. Exclude generated,
+# runtime, local-only, and secret-bearing paths so they're never
+# shipped to the build daemon or copied into the image.
+
+# VCS / local
+.git
+.gitignore
+.venv
+.DS_Store
+.idea
+.vscode
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.pytest_cache
+.mypy_cache
+
+# Node / frontend
+node_modules
+.pnpm-store
+.yarn
+frontend/dist
+frontend/node_modules
+
+# Local data + uploads (regenerated at runtime)
+uploads
+backend/uploads
+tryon_uploads
+tryon_results
+backend/fashion_gallery.db
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Datasets (Railway expects a volume mount for these; never bundle)
+Clothes_Dataset
+Clothes_Dataset_small
+
+# Unrelated project folders (not used by the backend)
+opentryon
+graphify-out
+backend/scripts
+
+# Secrets + env (Railway sets env vars in the dashboard, not via files)
+.env
+.env.*
+*.pem
+*.key
