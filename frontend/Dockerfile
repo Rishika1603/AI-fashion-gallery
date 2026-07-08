@@ -12,12 +12,8 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build with API base URL. Set as a build arg so it can be overridden
-# at deploy time without editing the Dockerfile. Defaults to /api
-# (works for same-origin reverse proxy setups).
-ARG VITE_API_BASE_URL=/api
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
-RUN npm run build
+# Build with API base URL. For same-service nginx proxy, use /api (default).
+# For separa...[truncated]
 
 # Production stage - nginx
 FROM nginx:alpine
