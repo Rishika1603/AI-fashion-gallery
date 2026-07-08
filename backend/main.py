@@ -3,6 +3,7 @@ import json
 import uuid
 import logging
 from pathlib import Path
+import aiofiles
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -174,6 +175,16 @@ def get_image_url(request_url, file_path):
     # Look up local paths in Cloudinary mapping first
     if CLOUDINARY_MAPPING and file_path in CLOUDINARY_MAPPING:
         return CLOUDINARY_MAPPING[file_path]
+
+    # Fallback: extract basename or relative Clothes_Dataset path
+    if CLOUDINARY_MAPPING:
+        if "Clothes_Dataset/" in file_path:
+            rel = file_path.split("Clothes_Dataset/", 1)[-1]
+            if rel in CLOUDINARY_MAPPING:
+                return CLOUDINARY_MAPPING[rel]
+        base = os.path.basename(file_path)
+        if base in CLOUDINARY_MAPPING:
+            return CLOUDINARY_MAPPING[base]
 
     base_url = str(request_url.base_url).rstrip("/")
 

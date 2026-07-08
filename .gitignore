@@ -9,8 +9,7 @@ tryon_results/
 # Opentryon
 opentryon/
 
-# Cloudinary mappings (regenerated per env)
-backend/cloudinary_mapping.json
+# Cloudinary URLs are static (one Cloudinary account) — file committed
 
 # Environment
 .env
