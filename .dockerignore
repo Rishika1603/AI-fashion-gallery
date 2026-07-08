@@ -31,9 +31,6 @@ uploads
 backend/uploads
 tryon_uploads
 tryon_results
-backend/fashion_gallery.db
-backend/cloudinary_mapping.json
-*.db
 *.sqlite
 *.sqlite3
 *.log
