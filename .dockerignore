@@ -26,12 +26,13 @@ node_modules
 frontend/dist
 frontend/node_modules
 
-# Local data + uploads (regenerated at runtime)
+# Data files + mappings (regenerated at runtime)
 uploads
 backend/uploads
 tryon_uploads
 tryon_results
 backend/fashion_gallery.db
+backend/cloudinary_mapping.json
 *.db
 *.sqlite
 *.sqlite3

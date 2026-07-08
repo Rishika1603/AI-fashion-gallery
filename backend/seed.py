@@ -4,7 +4,9 @@ from PIL import Image
 from io import BytesIO
 
 import os
+import json
 import random
+from pathlib import Path
 
 try:
     from .embeddings import get_image_embedding
@@ -29,6 +31,27 @@ CATEGORY_MAP = {
     "Rok": "Skirt",
     "Sweter": "Sweater",
 }
+
+# --- Cloudinary URL mapping ---
+CLOUDINARY_MAPPING_PATH = Path(__file__).resolve().parent / "cloudinary_mapping.json"
+_cloudinary_map: dict[str, str] | None = None
+
+def _load_cloudinary_map() -> dict[str, str]:
+    global _cloudinary_map
+    if _cloudinary_map is None:
+        if CLOUDINARY_MAPPING_PATH.exists():
+            with open(CLOUDINARY_MAPPING_PATH) as f:
+                _cloudinary_map = json.load(f)
+            print(f"Loaded Cloudinary mapping ({len(_cloudinary_map)} URLs)")
+        else:
+            _cloudinary_map = {}
+            print("No Cloudinary mapping found — using local file paths")
+    return _cloudinary_map
+
+def _resolve_image_url(abs_path: str) -> str:
+    """Return Cloudinary URL if available, else fall back to local path."""
+    mapping = _load_cloudinary_map()
+    return mapping.get(abs_path, abs_path)
 
 DATASET_ROOT = os.getenv("DATASET_DIR", "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset")
 if not os.path.exists(DATASET_ROOT):
@@ -73,6 +96,7 @@ def seed_data(limit_per_category: int | None = None):
 
             abs_path = os.path.abspath(os.path.join(root, file))
             name = os.path.splitext(file)[0].replace("_", " ").title()
+            image_url = _resolve_image_url(abs_path)
 
             try:
                 embedding = None
@@ -89,7 +113,7 @@ def seed_data(limit_per_category: int | None = None):
                 style_code=f"DST-{random.randint(10000, 99999)}",
                 price_min=float(random.randint(20, 100)),
                 price_max=float(random.randint(110, 300)),
-                image_url=abs_path,
+                image_url=image_url,
                 category=category,
                 color_swatches=["#000000"],
                 social_label=None,

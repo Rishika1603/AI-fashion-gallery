@@ -20,8 +20,7 @@ ENV LOG_LEVEL=INFO \
     PORT=8000 \
     PYTHONUNBUFFERED=1 \
     ENABLE_GRADIO_TRYON=0 \
-    ENABLE_AUTO_INGEST=1 \
-    DATASET_DIR=/app/Clothes_Dataset \
+    ENABLE_AUTO_INGEST=0 \
     ALLOWED_ORIGINS=https://backend-production-719d.up.railway.app
 
 RUN mkdir -p backend/uploads

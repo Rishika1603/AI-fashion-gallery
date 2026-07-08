@@ -9,5 +9,8 @@ tryon_results/
 # Opentryon
 opentryon/
 
+# Cloudinary mappings (regenerated per env)
+backend/cloudinary_mapping.json
+
 # Environment
 .env
