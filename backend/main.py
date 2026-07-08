@@ -99,6 +99,16 @@ app.mount("/static/tryon_results", StaticFiles(directory="tryon_results"), name=
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
+# Load Cloudinary URL mapping for fallback (maps local paths → Cloudinary URLs)
+CLOUDINARY_MAPPING = {}
+_mapping_path = Path(__file__).resolve().parent / "cloudinary_mapping.json"
+if _mapping_path.exists():
+    try:
+        CLOUDINARY_MAPPING = json.loads(_mapping_path.read_text())
+        logger.info(f"Loaded {len(CLOUDINARY_MAPPING)} Cloudinary URL mappings")
+    except Exception as e:
+        logger.warning(f"Failed to load cloudinary_mapping.json: {e}")
+
 # Optional AI/ML deps
 try:
     from .embeddings import (
@@ -156,6 +166,15 @@ def get_image_url(request_url, file_path):
     if not file_path:
         return None
     file_path = str(file_path).replace("\\", "/")
+
+    # Already a Cloudinary/HTTP URL → return as-is
+    if file_path.startswith("http://") or file_path.startswith("https://"):
+        return file_path
+
+    # Look up local paths in Cloudinary mapping first
+    if CLOUDINARY_MAPPING and file_path in CLOUDINARY_MAPPING:
+        return CLOUDINARY_MAPPING[file_path]
+
     base_url = str(request_url.base_url).rstrip("/")
 
     # Handle absolute paths (e.g., C:/Users/... or /home/... or /mnt/c/Users/...)
