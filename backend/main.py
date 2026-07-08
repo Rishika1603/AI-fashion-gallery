@@ -199,7 +199,7 @@ async def get_products(
     limit: int = Query(20, ge=1, le=100),
     category: Optional[str] = None,
 ):
-    if not have_vector_store:
+    if not have_vector_store or not have_embeddings:
         # fallback: read directly from SQLite
         db = next(get_db())
         try:
@@ -287,7 +287,7 @@ async def get_products(
 
 @app.get("/api/products/{product_id}", response_model=ProductSchema)
 async def get_product_by_id(request: Request, product_id: str):
-    if not have_vector_store:
+    if not have_vector_store or not have_embeddings:
         raise HTTPException(status_code=404, detail="Product not found")
     vectors = await fetch_vectors_async([product_id])
     if not vectors or product_id not in vectors:
