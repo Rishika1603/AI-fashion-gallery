@@ -63,10 +63,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static files
-DATASET_DIR = "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset"
-if os.path.exists(DATASET_DIR):
-    app.mount("/static/dataset", StaticFiles(directory=DATASET_DIR), name="dataset")
+# Dataset root: allow an explicit env override; otherwise default to local
+# dataset path and a small bundled copy for containerized deploys.
+_default_dataset_local = Path("/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset")
+_default_dataset_small = Path("/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset_small")
+_default_dataset_docker = Path("/app") / "Clothes_Dataset"
+_dataset_dir_env = os.getenv("DATASET_DIR")
+if _dataset_dir_env:
+    DATASET_DIR = Path(_dataset_dir_env)
+elif _default_dataset_docker.exists():
+    DATASET_DIR = _default_dataset_docker
+elif _default_dataset_small.exists():
+    DATASET_DIR = _default_dataset_small
+else:
+    DATASET_DIR = _default_dataset_local
+
+if DATASET_DIR.exists():
+    app.mount("/static/dataset", StaticFiles(directory=str(DATASET_DIR)), name="dataset")
+else:
+    logger.warning("Dataset directory not found: %s", DATASET_DIR)
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)

@@ -1,0 +1,13 @@
+# Dataset directories (large — never commit)
+Clothes_Dataset/
+Clothes_Dataset_small/
+
+# Try-on uploads/results
+tryon_uploads/
+tryon_results/
+
+# Opentryon
+opentryon/
+
+# Environment
+.env

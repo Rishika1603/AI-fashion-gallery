@@ -2,7 +2,6 @@ from .database import SessionLocal, engine, Base
 from .models import Product
 from PIL import Image
 from io import BytesIO
-from .ingest_dataset import CATEGORY_MAP
 
 import os
 import random
@@ -13,7 +12,29 @@ try:
 except Exception:
     have_embeddings = False
 
-DATASET_ROOT = "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset"
+CATEGORY_MAP = {
+    "Blazer": "Blazer",
+    "Celana_Panjang": "Trousers",
+    "Celana_Pendek": "Shorts",
+    "Gaun": "Dress",
+    "Hoodie": "Hoodie",
+    "Jaket": "Jacket",
+    "Jaket_Denim": "Denim Jacket",
+    "Jaket_Olahraga": "Sport Jacket",
+    "Jeans": "Jeans",
+    "Kaos": "T-Shirt",
+    "Kemeja": "Shirt",
+    "Mantel": "Coat",
+    "Polo": "Polo Shirt",
+    "Rok": "Skirt",
+    "Sweter": "Sweater",
+}
+
+DATASET_ROOT = os.getenv("DATASET_DIR", "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset")
+if not os.path.exists(DATASET_ROOT):
+    alt = "/home/rishika-vishwakarma/Projects/AI-fashion-gallery/Clothes_Dataset_small"
+    if os.path.exists(alt):
+        DATASET_ROOT = alt
 
 # Re-create tables to update schema (WARNING: Data loss if exists, ok for seed)
 # In production, use Alembic migrations
