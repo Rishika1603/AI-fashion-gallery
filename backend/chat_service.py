@@ -1,6 +1,7 @@
 import os
 import logging
-import google.generativeai as genai
+import google.genai as genai
+from google.genai import types
 from .embeddings import get_text_embedding_async, normalize_score
 from .vector_store import query_vectors_async
 from typing import List, Optional
@@ -12,17 +13,15 @@ GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GENAI_API_KEY:
     logger.warning("GEMINI_API_KEY not found in environment variables.")
 
-genai.configure(api_key=GENAI_API_KEY)
+client = genai.Client(api_key=GENAI_API_KEY)
 
 # Generation Config
-generation_config = {
-    "temperature": 0.3,
-    "top_p": 1,
-    "top_k": 1,
-    "max_output_tokens": 2048,
-}
-
-model = genai.GenerativeModel("gemini-2.5-flash", generation_config=generation_config)
+generation_config = types.GenerateContentConfig(
+    temperature=0.3,
+    top_p=1,
+    top_k=1,
+    max_output_tokens=2048,
+)
 
 async def get_relevant_products(query_text: str, top_k: int = 5) -> List[dict]:
     """
@@ -127,7 +126,11 @@ async def generate_chat_response(user_message: str, history: Optional[List[dict]
     
     # 4. Call Gemini
     try:
-        response = await model.generate_content_async(prompt)
+        response = await client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=generation_config,
+        )
         return response.text
     except Exception as e:
         print(f"Gemini API Error: {e}")

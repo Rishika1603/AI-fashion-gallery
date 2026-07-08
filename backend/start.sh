@@ -6,6 +6,7 @@ echo "[start.sh] Python: $(python --version 2>&1) at $(which python)"
 echo "[start.sh] CWD=$(pwd)"
 
 export PYTHONPATH=/app
+export GRPC_VERBOSITY=NONE
 python -c "import sys; print('[start.sh] PYTHONPATH=', sys.path[:3])"
 python -c "from backend.main import app" 2>&1 || echo "[start.sh] app import failed; continuing if CMD retries."
 

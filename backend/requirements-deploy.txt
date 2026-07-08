@@ -24,7 +24,7 @@ requests~=2.32.5
 # free-plan 1GB image limit.
 --extra-index-url https://download.pytorch.org/whl/cpu
 
-google-generativeai~=0.8.6
+google-genai>=1.14.0
 pinecone~=8.0.1
 torch~=2.10.0
 transformers~=5.1.0

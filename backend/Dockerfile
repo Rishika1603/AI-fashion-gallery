@@ -19,6 +19,7 @@ ENV LOG_LEVEL=INFO \
     HOST=0.0.0.0 \
     PORT=8000 \
     PYTHONUNBUFFERED=1 \
+    GRPC_VERBOSITY=NONE \
     ENABLE_GRADIO_TRYON=0 \
     ENABLE_AUTO_INGEST=0 \
     ALLOWED_ORIGINS=https://ai-fashion-gallery-frontend-production.up.railway.app,https://backend-production-a95c.up.railway.app

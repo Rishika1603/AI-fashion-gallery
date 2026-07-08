@@ -198,20 +198,20 @@ async def _call_llm(prompt: str) -> str:
         raise RuntimeError("No LLM configuration available. Set GEMINI_API_KEY and model_name.")
 
     try:
-        import google.generativeai as genai
+        import google.genai as genai
+        from google.genai import types
     except ImportError as exc:
-        raise RuntimeError("google-generativeai is required for the orchestrator.") from exc
+        raise RuntimeError("google-genai is required for the orchestrator.") from exc
 
-    genai.configure(api_key=config.genai.api_key)
-    model = genai.GenerativeModel(
-        model_name=config.genai.model_name,
-        generation_config={
-            "temperature": 0.3,
-            "max_output_tokens": 2048,
-        },
+    genai_client = genai.Client(api_key=config.genai.api_key)
+    response = await genai_client.aio.models.generate_content(
+        model=config.genai.model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.3,
+            max_output_tokens=2048,
+        ),
     )
-
-    response = await model.generate_content_async(prompt)
     text = getattr(response, "text", None)
     if not text:
         raise RuntimeError(f"LLM returned an empty response for prompt: {prompt!r}")
