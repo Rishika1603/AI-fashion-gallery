@@ -32,6 +32,7 @@ from .schemas import (
     TryOnRequestOut,
     AdminLoginRequest,
     AdminRejectRequest,
+    TryOnAccessStatus,
 )
 from pydantic import BaseModel
 from PIL import Image
@@ -92,6 +93,7 @@ app.mount("/static/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 TRYON_UPLOAD_DIR = "tryon_uploads"
 if not os.path.exists(TRYON_UPLOAD_DIR):
     os.makedirs(TRYON_UPLOAD_DIR)
+app.mount("/static/tryon_uploads", StaticFiles(directory=TRYON_UPLOAD_DIR), name="tryon_uploads")
 
 # Serve try-on results
 os.makedirs("tryon_results", exist_ok=True)
@@ -920,12 +922,200 @@ async def fashn_features():
 ADMIN_KEY = os.getenv("ADMIN_KEY", "admin123")  # Change in production!
 from fastapi import Header, Depends, HTTPException, status
 
-async def verify_admin(authorization: str = Header(None, alias="Authorization")):
-    """Dependency to verify admin access via Bearer token."""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization header required")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or token != ADMIN_KEY:
+
+# ── Admin Login Endpoint ──────────────────────────────────────────────
+
+
+@app.post("/api/admin/login")
+async def admin_login(body: AdminLoginRequest):
+    """Authenticate admin and return the access token.
+
+    The returned token should be sent as ``X-Admin-Key`` or
+    ``Authorization: *** <token>`` on subsequent requests.
+    """
+    if body.password != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin password")
+    return {"token": ADMIN_KEY, "message": "Login successful"}
+
+
+# ── Admin Credentials / Settings Manager ──────────────────────────────
+
+CONFIGURABLE_SETTINGS = [
+    # (key, category, label, description, is_sensitive)
+    ("PINECONE_API_KEY", "Vector DB", "Pinecone API Key", "Pinecone vector database API key", True),
+    ("PINECONE_INDEX_NAME", "Vector DB", "Pinecone Index Name", "Pinecone index name for product vectors", False),
+    ("GEMINI_API_KEY", "AI / LLM", "Gemini API Key", "Google Gemini API key for embeddings & chat", True),
+    ("GENAI_MODEL", "AI / LLM", "Gemini Model", "Model name (e.g. gemini-2.5-flash)", False),
+    ("FASHN_API_KEY", "Try-On", "Fashn.ai API Key", "Fashn.ai API key for virtual try-on", True),
+    ("REPLICATE_API_TOKEN", "Try-On", "Replicate API Token", "Replicate API token for IDM-VTON", True),
+    ("HF_TOKEN", "Try-On", "HuggingFace Token", "HuggingFace token for Gradio try-on backends", True),
+    ("SEGMIND_API_KEY", "Try-On", "Segmind API Key", "Segmind API key for try-on", True),
+    ("ENABLE_GRADIO_TRYON", "Try-On", "Enable Gradio Try-On", "Set to 1/true to enable HF Spaces backend", False),
+    ("CLOUDINARY_CLOUD_NAME", "Cloudinary", "Cloud Name", "Cloudinary cloud name for image hosting", False),
+    ("CLOUDINARY_API_KEY", "Cloudinary", "API Key", "Cloudinary API key", True),
+    ("CLOUDINARY_API_SECRET", "Cloudinary", "API Secret", "Cloudinary API secret", True),
+    ("DATABASE_URL", "Database", "Database URL", "SQLAlchemy database URL", False),
+    ("DATABASE_ECHO", "Database", "SQL Echo", "Set to 1/true to log SQL queries", False),
+    ("ADMIN_KEY", "Admin", "Admin Password", "Password for this admin panel", True),
+    ("ALLOWED_ORIGINS", "App", "Allowed Origins", "CORS origins (comma-separated)", False),
+    ("LOG_LEVEL", "App", "Log Level", "DEBUG, INFO, WARNING, ERROR", False),
+    ("DATASET_DIR", "App", "Dataset Directory", "Path to the clothes dataset folder", False),
+    ("RATE_LIMIT_SEARCH", "App", "Search Rate Limit", "e.g. 20/minute", False),
+    ("RATE_LIMIT_TRYON", "App", "Try-On Rate Limit", "e.g. 5/minute", False),
+]
+
+ENV_PATH = Path(__file__).parent / ".env"
+
+
+def _mask_value(value: str | None, is_sensitive: bool) -> str | None:
+    """Mask sensitive values, showing only last 4 chars."""
+    if value is None or not is_sensitive:
+        return value
+    if len(value) <= 8:
+        return "****"
+    return value[:4] + "*" * (len(value) - 8) + value[-4:]
+
+
+def _read_env_file() -> dict[str, str]:
+    """Read .env file into a dict of key→raw line value."""
+    if not ENV_PATH.exists():
+        return {}
+    result: dict[str, str] = {}
+    with open(ENV_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, val = line.partition("=")
+                result[key.strip()] = val.strip().strip("\"'")
+    return result
+
+
+def _write_env_file(changes: dict[str, str]) -> list[str]:
+    """Merge changes into .env, preserving comments and ordering.
+
+    Returns list of keys that were actually updated.
+    """
+    if not ENV_PATH.exists():
+        # Create a new .env
+        with open(ENV_PATH, "w") as f:
+            for key, val in changes.items():
+                f.write(f"{key}={val}\n")
+        return list(changes.keys())
+
+    with open(ENV_PATH) as f:
+        lines = f.readlines()
+
+    updated: list[str] = []
+    seen_keys: set[str] = set()
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in changes:
+                lines[i] = f"{key}={changes[key]}\n"
+                updated.append(key)
+                seen_keys.add(key)
+
+    # Append any new keys that weren't found
+    for key, val in changes.items():
+        if key not in seen_keys:
+            lines.append(f"{key}={val}\n")
+            updated.append(key)
+
+    with open(ENV_PATH, "w") as f:
+        f.writelines(lines)
+
+    return updated
+
+
+@app.get("/api/admin/settings")
+async def list_settings(_=Depends(verify_admin)):
+    """Return all configurable settings with current values (masked if sensitive)."""
+    env_values = _read_env_file()
+    overrides = os.environ  # Runtime overrides
+
+    result = []
+    for key, category, label, desc, sensitive in CONFIGURABLE_SETTINGS:
+        current = env_values.get(key) or overrides.get(key)
+        result.append({
+            "key": key,
+            "category": category,
+            "label": label,
+            "description": desc,
+            "sensitive": sensitive,
+            "value": _mask_value(current, sensitive),
+            "has_value": current is not None and current != "",
+        })
+    return {"settings": result}
+
+
+class SettingsUpdateRequest(BaseModel):
+    settings: dict[str, str]
+
+
+@app.put("/api/admin/settings")
+async def update_settings(
+    body: SettingsUpdateRequest,
+    _=Depends(verify_admin),
+):
+    """Update one or more settings in the .env file.
+
+    Only keys in CONFIGURABLE_SETTINGS are accepted.
+    Returns which keys were updated.
+    """
+    valid_keys = {s[0] for s in CONFIGURABLE_SETTINGS}
+    unknown = [k for k in body.settings if k not in valid_keys]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown settings: {', '.join(unknown)}",
+        )
+
+    updated = _write_env_file(body.settings)
+    logger.info("Admin updated env settings: %s", updated)
+
+    # Reload dotenv so future os.getenv calls pick up changes
+    from dotenv import load_dotenv
+    load_dotenv(ENV_PATH, override=True)
+
+    # Reset config cache so next config read gets fresh values
+    try:
+        from .config import reset_config_cache
+        reset_config_cache()
+    except Exception:
+        pass
+
+    # Reload ADMIN_KEY in case it was changed
+    global ADMIN_KEY
+    if "ADMIN_KEY" in body.settings:
+        ADMIN_KEY = body.settings["ADMIN_KEY"]
+
+    return {
+        "updated": updated,
+        "message": f"{len(updated)} setting(s) saved to .env. Some changes may need a server restart to take full effect.",
+    }
+
+
+async def verify_admin(
+    authorization: str | None = Header(None, alias="Authorization"),
+    x_admin_key: str | None = Header(None, alias="X-Admin-Key"),
+):
+    """Dependency to verify admin access via Bearer token or X-Admin-Key header."""
+    token = None
+    if authorization:
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            token = value
+    if x_admin_key:
+        if token is not None and token != x_admin_key:
+            raise HTTPException(status_code=403, detail="Mismatched admin credentials")
+        token = x_admin_key
+    if not token:
+        raise HTTPException(status_code=401, detail="Authorization or X-Admin-Key header required")
+    if token != ADMIN_KEY:
         raise HTTPException(status_code=403, detail="Invalid admin credentials")
     return True
 
@@ -1041,16 +1231,26 @@ async def admin_approve_tryon(
     _=Depends(verify_admin),
     db: Session = Depends(get_db),
 ):
-    """Admin approves a try-on request — executes the try-on using free HF Space backend."""
+    """Admin approves a try-on request.
+
+    - If it's an access-only request (no images): just grants access.
+    - If it's a full request (with images): executes the try-on.
+    """
     record = db.query(TryOnRequest).filter(TryOnRequest.id == request_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Request not found")
     if record.status != "pending":
         raise HTTPException(status_code=400, detail=f"Request is already {record.status}")
 
-    # Execute try-on
+    # Access-only request — just approve, don't run try-on
+    if not record.person_image_path or not record.garment_image_path:
+        record.status = "approved"
+        db.commit()
+        logger.info("Access request #%d approved (no try-on run)", request_id)
+        return {"status": "approved", "message": "Access granted"}
+
+    # Full try-on request — execute the try-on
     if not try_on_available:
-        # Mark as rejected since no backend available
         record.status = "rejected"
         record.admin_note = "Try-On service is not available. Configure an API key."
         db.commit()
@@ -1103,6 +1303,161 @@ async def admin_reject_tryon(
     db.commit()
     logger.info("Try-on request #%d rejected: %s", request_id, record.admin_note)
     return {"status": "rejected", "note": record.admin_note}
+
+
+# ── Session Access Request (gate before upload) ─────────────────────
+
+
+class AccessRequestIn(BaseModel):
+    session_id: str
+
+
+@app.post("/api/tryon/request-access")
+async def request_tryon_access(
+    body: AccessRequestIn,
+    db: Session = Depends(get_db),
+):
+    """User requests access to the try-on feature for their session."""
+    session_id = body.session_id
+    # Check if there's already a pending/approved request for this session
+    existing = (
+        db.query(TryOnRequest)
+        .filter(
+            TryOnRequest.session_id == session_id,
+            TryOnRequest.person_image_path.is_(None),
+            TryOnRequest.garment_image_path.is_(None),
+            TryOnRequest.status.in_(["pending", "approved"]),
+        )
+        .first()
+    )
+    if existing:
+        return {"id": existing.id, "status": existing.status, "message": "Request already exists"}
+
+    record = TryOnRequest(
+        session_id=session_id,
+        person_image_path=None,
+        garment_image_path=None,
+        status="pending",
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    logger.info("Access request #%d for session %s", record.id, session_id)
+    return {"id": record.id, "status": "pending", "message": "Access request submitted"}
+
+
+@app.get("/api/tryon/access-status", response_model=TryOnAccessStatus)
+async def check_tryon_access(
+    session_id: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Check if a session has access to the try-on feature."""
+    # Look for the most recent access-only request (no images)
+    record = (
+        db.query(TryOnRequest)
+        .filter(
+            TryOnRequest.session_id == session_id,
+            TryOnRequest.person_image_path.is_(None),
+            TryOnRequest.garment_image_path.is_(None),
+        )
+        .order_by(TryOnRequest.created_at.desc())
+        .first()
+    )
+    if not record:
+        return TryOnAccessStatus(status="none", request_id=None, admin_note=None)
+
+    return TryOnAccessStatus(
+        status=record.status,
+        request_id=record.id,
+        admin_note=record.admin_note,
+    )
+
+
+# ── Route aliases matching frontend API calls ───────────────────────
+
+
+@app.post("/api/try-on-requests")
+async def create_tryon_request_alias(
+    session_id: str = Form(...),
+    user_photo: UploadFile = File(None),
+    garment_photo: UploadFile = File(None),
+    db: Session = Depends(get_db),
+):
+    """Alias for POST /api/tryon/request — matches frontend path."""
+    if user_photo and garment_photo:
+        # Full try-on request
+        return await create_tryon_request(
+            session_id=session_id,
+            person_image=user_photo,
+            garment_image=garment_photo,
+            db=db,
+        )
+    # Access-only request (no images)
+    from pydantic import BaseModel as _BM
+    body = _BM()
+    body.session_id = session_id
+    return await request_tryon_access(body=AccessRequestIn(session_id=session_id), db=db)
+
+
+@app.get("/api/try-on-requests")
+async def list_user_requests_alias(
+    session_id: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Alias for GET /api/tryon/requests — matches frontend path."""
+    return await list_user_requests(session_id=session_id, db=db)
+
+
+@app.get("/api/admin/try-on-requests/pending")
+async def admin_pending_requests_alias(
+    _=Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    """Alias for GET /api/admin/tryon/pending — matches frontend path."""
+    records = (
+        db.query(TryOnRequest)
+        .filter(TryOnRequest.status == "pending")
+        .order_by(TryOnRequest.created_at.asc())
+        .all()
+    )
+    result = []
+    for r in records:
+        has_images = bool(r.person_image_path and r.garment_image_path)
+        obj = {
+            "id": r.id,
+            "session_id": r.session_id,
+            "status": r.status,
+            "admin_note": r.admin_note,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "has_images": has_images,
+            "request_type": "tryon" if has_images else "access",
+        }
+        if has_images:
+            obj["garment_url"] = f"/static/tryon_uploads/{os.path.basename(r.garment_image_path)}" if r.garment_image_path else None
+            obj["user_photo_url"] = f"/static/tryon_uploads/{os.path.basename(r.person_image_path)}" if r.person_image_path else None
+        result.append(obj)
+    return result
+
+
+@app.post("/api/admin/try-on-requests/{request_id}/approve")
+async def admin_approve_tryon_alias(
+    request_id: int,
+    _=Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    """Alias for POST /api/admin/tryon/approve — matches frontend path."""
+    return await admin_approve_tryon(request_id=request_id, _=_, db=db)
+
+
+@app.post("/api/admin/try-on-requests/{request_id}/reject")
+async def admin_reject_tryon_alias(
+    request_id: int,
+    body: AdminRejectRequest,
+    _=Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    """Alias for POST /api/admin/tryon/reject — matches frontend path."""
+    return await admin_reject_tryon(request_id=request_id, body=body, db=db)
 
 
 if __name__ == "__main__":

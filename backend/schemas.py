@@ -67,3 +67,9 @@ class AdminLoginRequest(BaseModel):
 class AdminRejectRequest(BaseModel):
     note: Optional[str] = None
 
+class TryOnAccessStatus(BaseModel):
+    """Session-level try-on access status."""
+    status: str  # 'none' | 'pending' | 'approved' | 'rejected'
+    admin_note: Optional[str] = None
+    request_id: Optional[int] = None
+

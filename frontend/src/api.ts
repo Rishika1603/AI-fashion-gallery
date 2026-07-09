@@ -47,12 +47,26 @@ export interface TryOnRequestItem {
     id: number;
     session_id: string;
     status: 'pending' | 'approved' | 'rejected' | 'completed';
-    garment_url: string;
-    user_photo_url: string;
+    garment_url?: string;
+    user_photo_url?: string;
     result_url?: string;
     admin_note?: string;
     created_at: string;
+    has_images?: boolean;
+    request_type?: 'access' | 'tryon';
 }
+
+// ── Try-On Access Request (gate before upload) ─────────────────────
+
+export const requestTryOnAccess = async (sessionId: string): Promise<{ id: number; status: string; message: string }> => {
+    const response = await axios.post(`${API_BASE_URL}/tryon/request-access`, { session_id: sessionId });
+    return response.data;
+};
+
+export const checkTryOnAccess = async (sessionId: string): Promise<{ status: string; request_id?: number; admin_note?: string }> => {
+    const response = await axios.get(`${API_BASE_URL}/tryon/access-status`, { params: { session_id: sessionId } });
+    return response.data;
+};
 
 // ── Try-On Request API (admin-gated workflow) ─────────────────────────────
 
@@ -100,6 +114,41 @@ export const adminRejectTryOn = async (adminKey: string, requestId: number, note
         { note },
         { headers: { 'X-Admin-Key': adminKey } }
     );
+};
+
+// ── Admin Settings / Credentials Manager ───────────────────────────────────
+
+export interface SettingItem {
+    key: string;
+    category: string;
+    label: string;
+    description: string;
+    sensitive: boolean;
+    value: string | null;
+    has_value: boolean;
+}
+
+export interface SettingsResponse {
+    settings: SettingItem[];
+}
+
+export const getAdminSettings = async (adminKey: string): Promise<SettingsResponse> => {
+    const response = await axios.get(`${API_BASE_URL}/admin/settings`, {
+        headers: { 'X-Admin-Key': adminKey },
+    });
+    return response.data;
+};
+
+export const updateAdminSettings = async (
+    adminKey: string,
+    settings: Record<string, string>
+): Promise<{ updated: string[]; message: string }> => {
+    const response = await axios.put(
+        `${API_BASE_URL}/admin/settings`,
+        { settings },
+        { headers: { 'X-Admin-Key': adminKey } }
+    );
+    return response.data;
 };
 
 // ── Fashn.ai API stubs ────────────────────────────────────────────────────

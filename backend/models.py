@@ -32,8 +32,8 @@ class TryOnRequest(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, index=True, nullable=False)
-    person_image_path = Column(String, nullable=False)
-    garment_image_path = Column(String, nullable=False)
+    person_image_path = Column(String, nullable=True)
+    garment_image_path = Column(String, nullable=True)
     status = Column(String, default="pending")  # pending | approved | completed | rejected
     result_path = Column(String, nullable=True)
     admin_note = Column(Text, nullable=True)
