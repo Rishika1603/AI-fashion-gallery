@@ -938,6 +938,27 @@ async def admin_login(body: AdminLoginRequest):
     return {"token": ADMIN_KEY, "message": "Login successful"}
 
 
+async def verify_admin(
+    authorization: str | None = Header(None, alias="Authorization"),
+    x_admin_key: str | None = Header(None, alias="X-Admin-Key"),
+):
+    """Dependency to verify admin access via Bearer token or X-Admin-Key header."""
+    token = None
+    if authorization:
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            token = value
+    if x_admin_key:
+        if token is not None and token != x_admin_key:
+            raise HTTPException(status_code=403, detail="Mismatched admin credentials")
+        token = x_admin_key
+    if not token:
+        raise HTTPException(status_code=401, detail="Authorization or X-Admin-Key header required")
+    if token != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin credentials")
+    return True
+
+
 # ── Admin Credentials / Settings Manager ──────────────────────────────
 
 CONFIGURABLE_SETTINGS = [
@@ -1098,26 +1119,6 @@ async def update_settings(
         "message": f"{len(updated)} setting(s) saved to .env. Some changes may need a server restart to take full effect.",
     }
 
-
-async def verify_admin(
-    authorization: str | None = Header(None, alias="Authorization"),
-    x_admin_key: str | None = Header(None, alias="X-Admin-Key"),
-):
-    """Dependency to verify admin access via Bearer token or X-Admin-Key header."""
-    token = None
-    if authorization:
-        scheme, _, value = authorization.partition(" ")
-        if scheme.lower() == "bearer":
-            token = value
-    if x_admin_key:
-        if token is not None and token != x_admin_key:
-            raise HTTPException(status_code=403, detail="Mismatched admin credentials")
-        token = x_admin_key
-    if not token:
-        raise HTTPException(status_code=401, detail="Authorization or X-Admin-Key header required")
-    if token != ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin credentials")
-    return True
 
 # ── Try-On Request / Admin Approval Routes ────────────────────────────
 
