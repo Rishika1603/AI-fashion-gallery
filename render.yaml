@@ -1,0 +1,51 @@
+# Render blueprint — backend web service.
+#
+# Deploy with:  https://render.com/deploy?repo=https://github.com/Rishika1603/AI-fashion-gallery
+# or: New > Blueprint > point at this repo (Render reads render.yaml).
+#
+# The frontend is a separate static site on Vercel (see frontend/vercel.json).
+# Set VITE_API_BASE_URL there to https://<this-service>.onrender.com/api
+#
+# Free tier notes:
+#  - 512 MB RAM. The image is kept lean on purpose (no torch/transformers),
+#    so the app peaks at ~120 MB RSS. Search-by-photo answers 503 without them.
+#  - The service sleeps after 15 minutes idle and takes ~1 minute to wake.
+#    The frontend retries cold-start failures; see frontend/src/api.ts.
+#  - The filesystem is ephemeral, so the 7,500-product catalog is rebuilt
+#    from backend/cloudinary_mapping.json on every cold start (~3 seconds).
+
+services:
+  - type: web
+    name: ai-fashion-gallery-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: ALLOWED_ORIGINS
+        # Comma-separated list of allowed browser origins. Any *.vercel.app,
+        # *.onrender.com or *.up.railway.app origin is allowed regardless.
+        value: https://ai-fashion-gallery-frontend.vercel.app
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX_NAME
+        sync: false
+      - key: FASHN_API_KEY
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      # Set to a Railway/Postgres connection string to use Postgres instead
+      # of the bundled SQLite catalog.
+      # - key: DATABASE_URL
+      #   sync: false

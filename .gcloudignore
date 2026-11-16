@@ -1,0 +1,38 @@
+# Cloud Build / Cloud Run build context.
+# Keep it small and free of local artefacts. Mirrors .dockerignore, plus the
+# node/npm artefacts that would otherwise ship hundreds of megabytes.
+
+.git
+.gitignore
+.gcloudignore
+
+**/node_modules
+**/dist
+**/.vite
+
+# Local database (the image rebuilds the catalog from cloudinary_mapping.json)
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime upload directories
+uploads
+backend/uploads
+tryon_uploads
+backend/tryon_uploads
+tryon_results
+backend/tryon_results
+
+# Secrets
+.env
+**/.env
+**/.env.*
+*.pem
+*.key
+
+# Large or unrelated directories
+Clothes_Dataset
+Clothes_Dataset_small
+opentryon
+graphify-out
+backend/scripts
