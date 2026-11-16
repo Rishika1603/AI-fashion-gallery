@@ -4,6 +4,38 @@ import type { SearchResult, PaginatedResponse, Product } from './types';
 // Set VITE_API_BASE_URL in your deployment environment (e.g. https://api.yourdomain.com/api)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
+// ── Cold-start resilience ─────────────────────────────────────────────
+// Free-tier hosts (Render, HF Spaces) sleep after ~15 minutes of inactivity.
+// The first request after a cold start fails while the container boots, so
+// retry idempotent GETs with a growing delay instead of showing an error.
+// Retrying on the shared axios instance covers every call site.
+const COLD_START_RETRY_DELAYS = [2000, 5000, 10000, 20000, 30000];
+
+axios.defaults.timeout = 120000;
+
+axios.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+        const config = error.config as (any & { __coldStartRetries?: number }) | undefined;
+        if (!config) return Promise.reject(error);
+
+        const method = (config.method || 'get').toLowerCase();
+        const status = error.response?.status;
+        const isColdStart =
+            !error.response || status === 502 || status === 503 || status === 504;
+
+        if (method !== 'get' || !isColdStart) return Promise.reject(error);
+
+        const attempt = (config.__coldStartRetries ?? 0) + 1;
+        if (attempt > COLD_START_RETRY_DELAYS.length) return Promise.reject(error);
+
+        config.__coldStartRetries = attempt;
+        const delay = COLD_START_RETRY_DELAYS[attempt - 1];
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return axios.request(config);
+    }
+);
+
 export const getProducts = async (page: number = 1, limit: number = 20, category?: string): Promise<PaginatedResponse> => {
     const params: any = { page, limit };
     if (category) params.category = category;

@@ -31,7 +31,7 @@ ENV LOG_LEVEL=INFO \
     GRPC_VERBOSITY=NONE \
     ENABLE_GRADIO_TRYON=0 \
     ENABLE_AUTO_INGEST=0 \
-    ALLOWED_ORIGINS=https://ai-fashion-gallery-frontend-production.up.railway.app,https://ai-fashion-gallery-backend-production.up.railway.app
+    ALLOWED_ORIGINS=https://ai-fashion-gallery-frontend.vercel.app,https://ai-fashion-gallery-frontend-production.up.railway.app,https://ai-fashion-gallery-backend-production.up.railway.app
 
 # Bake the product catalog into the image. The dataset is far too large to
 # ship, so the catalog is rebuilt from the bundled Cloudinary URL mapping.
