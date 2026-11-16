@@ -1,8 +1,9 @@
 from transformers import CLIPProcessor, CLIPModel
 from PIL import Image
 import torch
-import numpy as np
 from typing import List, Union
+
+from .scoring import cosine_similarity, normalize_score
 
 import logging
 
@@ -69,33 +70,13 @@ async def get_text_embedding_async(text: str) -> List[float]:
 
 def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     """Computes cosine similarity between two vectors."""
-    vec1 = np.array(vec1)
-    vec2 = np.array(vec2)
-    
-    if vec1.ndim == 0 or vec2.ndim == 0 or vec1.size == 0 or vec2.size == 0:
-        return 0.0
-        
-    norm1 = np.linalg.norm(vec1)
-    norm2 = np.linalg.norm(vec2)
-    if norm1 == 0 or norm2 == 0:
-        return 0.0
-    return float(np.dot(vec1, vec2) / (norm1 * norm2))
+    from .scoring import cosine_similarity as _cosine_similarity
+    return _cosine_similarity(vec1, vec2)
 
 def normalize_score(raw_score: float) -> int:
     """
     Normalizes a raw CLIP cosine similarity score (typically 0.15 - 0.45 range)
     to a human-friendly percentage (0-100%).
     """
-    # CLIP similarity scores for high-dimensional vectors are naturally low.
-    # A score of 0.2 is a decent match, 0.35 is a very strong match.
-    # We map [0.18, 0.38] to [0, 100] with clipping.
-    low, high = 0.18, 0.38
-    
-    if raw_score <= low:
-        return 0
-    if raw_score >= high:
-        return 100
-        
-    # Linear interpolation
-    percentage = (raw_score - low) / (high - low) * 100
-    return int(round(percentage))
+    from .scoring import normalize_score as _normalize_score
+    return _normalize_score(raw_score)

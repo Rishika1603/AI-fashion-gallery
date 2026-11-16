@@ -1,10 +1,13 @@
 import os
 import logging
+import re
+from types import SimpleNamespace
+from typing import List, Optional
+
 import google.genai as genai
 from google.genai import types
-from .embeddings import get_text_embedding_async, normalize_score
-from .vector_store import query_vectors_async
-from typing import List, Optional
+
+from .scoring import normalize_score
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +16,9 @@ GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GENAI_API_KEY:
     logger.warning("GEMINI_API_KEY not found in environment variables.")
 
-client = genai.Client(api_key=GENAI_API_KEY)
+# Do not construct the client eagerly: genai.Client() raises when no key is
+# present, which would take the whole chat service down at import time.
+client = genai.Client(api_key=GENAI_API_KEY) if GENAI_API_KEY else None
 
 # Generation Config
 generation_config = types.GenerateContentConfig(
@@ -23,50 +28,122 @@ generation_config = types.GenerateContentConfig(
     max_output_tokens=2048,
 )
 
+
+def _singular(word: str) -> str:
+    """Very small stemmer so 'shirts' matches the category 'T-Shirt'."""
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _catalog_text_search(query_text: str, top_k: int = 5) -> List[dict]:
+    """Keyword search over the local catalog.
+
+    Used when the optional vector stack (CLIP + Pinecone) is unavailable,
+    so the assistant still answers with real catalog products instead of
+    telling the user nothing was found.
+    """
+    from sqlalchemy import or_
+
+    from .database import SessionLocal
+    from .models import Product
+
+    terms = [
+        _singular(t)
+        for t in re.findall(r"[a-z0-9]+", (query_text or "").lower())
+        if len(t) > 2
+    ]
+    if not terms:
+        return []
+
+    db = SessionLocal()
+    try:
+        clauses = []
+        for term in terms:
+            like = f"%{term}%"
+            clauses.append(or_(Product.name.ilike(like), Product.category.ilike(like)))
+
+        rows = db.query(Product).filter(or_(*clauses)).limit(500).all()
+
+        scored = []
+        for product in rows:
+            haystack = _singular(f"{product.name or ''} {product.category or ''}".lower())
+            hits = sum(1 for term in terms if term in haystack)
+            if hits:
+                scored.append((hits, product))
+
+        scored.sort(key=lambda item: (-item[0], (item[1].name or "")))
+
+        results = []
+        for hits, product in scored[:top_k]:
+            results.append(
+                {
+                    "product": SimpleNamespace(
+                        id=str(product.id),
+                        name=product.name,
+                        category=product.category,
+                        price_min=product.price_min,
+                        price_max=product.price_max,
+                        in_stock=bool(product.in_stock),
+                        image_url=product.image_url or "",
+                    ),
+                    "score": 0.22 + 0.05 * hits,
+                }
+            )
+        return results
+    except Exception as e:
+        logger.warning(f"Catalog text search failed: {e}")
+        return []
+    finally:
+        db.close()
+
+
 async def get_relevant_products(query_text: str, top_k: int = 5) -> List[dict]:
     """
-    Retrieves top_k relevant products based on the query text using Pinecone vector search.
+    Retrieves top_k relevant products based on the query text.
+
+    Prefers CLIP text embeddings + Pinecone vector search. Falls back to a
+    keyword search over the local catalog when that stack is not deployed.
     Returns a list of dictionaries with "product" and "score".
     """
     try:
+        from .embeddings import get_text_embedding_async
+        from .vector_store import query_vectors_async
+
         query_embedding = await get_text_embedding_async(query_text)
+        if query_embedding:
+            matches = await query_vectors_async(query_embedding, top_k=top_k)
+
+            scored_products = []
+            for m in matches:
+                md = m.get('metadata', {})
+                if not md: continue
+
+                # Build a dict that looks like the product object for compatibility
+                # Or better, just return the dict needed for context
+                product_data = {
+                    "id": m['id'],
+                    "name": md.get('name', 'Unknown'),
+                    "category": md.get('category', 'Unknown'),
+                    "price_min": md.get('price_min', 0),
+                    "price_max": md.get('price_max', 0),
+                    "in_stock": bool(md.get('in_stock', 1)),
+                    "image_url": md.get('image_url', '')
+                }
+
+                # We wrap it in a SimpleNamespace or just use dict if we update the consumer
+                # The consumer `generate_chat_response` expects `item["product"].id` access.
+                # Let's use a simple class or namedtuple for backward compat within the function
+                p_obj = SimpleNamespace(**product_data)
+
+                scored_products.append({"product": p_obj, "score": m['score']})
+
+            if scored_products:
+                return scored_products
     except Exception as e:
-        logger.error(f"Error generating text embedding: {e}")
-        return []
+        logger.warning(f"Vector search unavailable, using catalog text search: {e}")
 
-    if not query_embedding:
-        return []
-
-    # Query Pinecone
-    matches = await query_vectors_async(query_embedding, top_k=top_k)
-    
-    scored_products = []
-    
-    for m in matches:
-        md = m.get('metadata', {})
-        if not md: continue
-        
-        # Construct a dict that looks like the product object for compatibility
-        # Or better, just return the dict needed for context
-        product_data = {
-            "id": m['id'],
-            "name": md.get('name', 'Unknown'),
-            "category": md.get('category', 'Unknown'),
-            "price_min": md.get('price_min', 0),
-            "price_max": md.get('price_max', 0),
-            "in_stock": bool(md.get('in_stock', 1)),
-            "image_url": md.get('image_url', '')
-        }
-        
-        # We wrap it in a SimpleNamespace or just use dict if we update the consumer
-        # The consumer `generate_chat_response` expects `item["product"].id` access.
-        # Let's use a simple class or namedtuple for backward compat within the function
-        from types import SimpleNamespace
-        p_obj = SimpleNamespace(**product_data)
-        
-        scored_products.append({"product": p_obj, "score": m['score']})
-        
-    return scored_products
+    return _catalog_text_search(query_text, top_k)
 
 async def generate_chat_response(user_message: str, history: Optional[List[dict]] = None) -> str:
     """
