@@ -1,0 +1,81 @@
+# Cloud Run deployment pipeline (Google Cloud).
+#
+# One-off setup:
+#   gcloud auth application-default login
+#   gcloud config set project YOUR_PROJECT_ID
+#   gcloud config set region asia-south1
+#   gcloud artifacts repositories create ai-fashion-gallery \
+#       --repository-format=docker --location=asia-south1
+#
+# Deploy:
+#   gcloud builds submit --config cloudbuild.yaml \
+#       --substitutions=_ALLOWED_ORIGINS=https://your-frontend.vercel.app
+#
+# Secrets are read from Secret Manager. Create them once:
+#   gcloud secrets create GEMINI_API_KEY --data-file=-
+#   ...same for PINECONE_API_KEY, PINECONE_INDEX_NAME, FASHN_API_KEY,
+#      CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+#
+# Then wire them to the service (or uncomment the --set-secrets flags below).
+
+substitutions:
+  _REGION: asia-south1
+  _REPO: ai-fashion-gallery
+  _SERVICE: ai-fashion-gallery-backend
+  # 2GiB fits the lean image comfortably. Raise to 4Gi and set
+  # INSTALL_ML=1 to enable "search by photo" (CLIP needs ~1.5GB RSS).
+  _MEMORY: 2Gi
+  _CPU: "1"
+  _MIN_INSTANCES: "0"
+  _MAX_INSTANCES: "10"
+  _TIMEOUT: "300s"
+  _CONCURRENCY: "80"
+  # Comma-separated browser origins allowed by the backend CORS policy.
+  _ALLOWED_ORIGINS: https://ai-fashion-gallery-frontend.vercel.app
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - backend/Dockerfile
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - .
+    waitFor: ["-"]
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+    waitFor: ["build"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --port=8000
+      - --memory=${_MEMORY}
+      - --cpu=${_CPU}
+      - --min-instances=${_MIN_INSTANCES}
+      - --max-instances=${_MAX_INSTANCES}
+      - --timeout=${_TIMEOUT}
+      - --concurrency=${_CONCURRENCY}
+      - --allow-unauthenticated
+      - --set-env-vars=PYTHONUNBUFFERED=1,ALLOWED_ORIGINS=${_ALLOWED_ORIGINS}
+      # - --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,PINECONE_API_KEY=PINECONE_API_KEY:latest,PINECONE_INDEX_NAME=PINECONE_INDEX_NAME:latest,FASHN_API_KEY=FASHN_API_KEY:latest,CLOUDINARY_CLOUD_NAME=CLOUDINARY_CLOUD_NAME:latest,CLOUDINARY_API_KEY=CLOUDINARY_API_KEY:latest,CLOUDINARY_API_SECRET=CLOUDINARY_API_SECRET:latest
+    waitFor: ["push"]
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
