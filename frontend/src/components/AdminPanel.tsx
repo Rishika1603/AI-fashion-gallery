@@ -451,7 +451,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose, adminKey, onSe
                             <div className="space-y-2">
                               {items.map(setting => {
                                 const edited = setting.key in edits;
-                                const currentDisplay = edited ? edits[setting.key] : setting.value;
                                 const isRevealed = revealed[setting.key];
                                 const showMask = setting.sensitive && !isRevealed && !edited;
                                 const hasChanged = edited && edits[setting.key] !== getOriginalValue(setting.key);

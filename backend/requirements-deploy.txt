@@ -1,6 +1,13 @@
 # Minimal Railway deployment deps — image search + chat enabled.
 # Opt out of heavy optional features by leaving their API keys unset;
 # missing optional deps are handled via lazy imports and 503s.
+#
+# Size note: this file deliberately excludes torch/transformers (the CLIP
+# stack). Importing them costs ~370 MB of RSS and ~610 MB of image, which
+# does not fit a Railway Free/Trial service (0.5 GB RAM per service).
+# Everything else — catalog, chat, try-on, admin — works without them.
+# To re-enable "search by photo", install requirements-deploy-ml.txt as well
+# (requires a plan with >= 2 GB RAM and >= 5 GB disk, e.g. Railway Hobby).
 
 # Core API
 fastapi~=0.118.0
@@ -11,24 +18,15 @@ pydantic~=2.11.9
 aiofiles~=24.1.0
 slowapi~=0.1.9
 sqlalchemy~=2.0.43
+psycopg2-binary~=2.9.10
 Pillow~=12.0.0
 
 # HTTP
 httpx~=0.28.1
 requests~=2.32.5
 
-# Pin torch to CPU-only wheels from the PyTorch index. Using
-# --extra-index-url (additive) so all other packages still come from
-# the default PyPI — only torch falls through to the PyTorch CPU
-# index. Avoids ~2-3GB of CUDA / nvidia-* deps that blow the Railway
-# free-plan 1GB image limit.
---extra-index-url https://download.pytorch.org/whl/cpu
-
 google-genai>=1.14.0
 pinecone~=8.0.1
-torch~=2.10.0
-transformers~=5.1.0
-numpy~=2.3.5
 
 # Try-On
 gradio_client~=2.0.3

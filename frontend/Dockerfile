@@ -12,8 +12,12 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build with API base URL. For same-service nginx proxy, use /api (default).
-# For separa...[truncated]
+# Build with API base URL. Set as a build arg so it can be overridden
+# at deploy time without editing the Dockerfile. Defaults to /api, which
+# the nginx reverse proxy forwards to the backend (same-origin, no CORS).
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+RUN npm run build
 
 # Production stage - nginx
 FROM nginx:alpine
@@ -21,43 +25,14 @@ FROM nginx:alpine
 # Copy built assets to nginx
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Replace default config with our own for SPA routing.
-# Also proxy /api requests to the backend service (set RAILWAY_BACKEND_URL
-# at deploy time, or hardcode the backend domain here for simplicity).
-ARG RAILWAY_BACKEND_URL
-ENV RAILWAY_BACKEND_URL=${RAILWAY_BACKEND_URL}
+# Origin of the backend API, used by the /api reverse proxy. Override it
+# with a Railway service variable named BACKEND_URL — the nginx entrypoint
+# renders the template at container start, so no rebuild is needed.
+ENV BACKEND_URL=https://ai-fashion-gallery-backend-production.up.railway.app
 
-# Write nginx config with optional /api proxy if backend URL is set
-RUN if [ -n "$RAILWAY_BACKEND_URL" ]; then \
-      echo "server { \
-        listen 80; \
-        location /api/ { \
-          proxy_pass ${RAILWAY_BACKEND_URL}/api/; \
-          proxy_set_header Host \$host; \
-          proxy_set_header X-Real-IP \$remote_addr; \
-          proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; \
-          proxy_set_header X-Forwarded-Proto \$scheme; \
-        } \
-        location /static/ { \
-          proxy_pass ${RAILWAY_BACKEND_URL}/static/; \
-          proxy_set_header Host \$host; \
-        } \
-        location / { \
-          root /usr/share/nginx/html; \
-          index index.html index.htm; \
-          try_files \$uri \$uri/ /index.html; \
-        } \
-      }" > /etc/nginx/conf.d/default.conf; \
-    else \
-      echo "server { \
-        listen 80; \
-        location / { \
-          root /usr/share/nginx/html; \
-          index index.html index.htm; \
-          try_files \$uri \$uri/ /index.html; \
-        } \
-      }" > /etc/nginx/conf.d/default.conf; \
-    fi
+# Drop the stock config; the entrypoint renders our template instead.
+RUN rm -f /etc/nginx/conf.d/default.conf
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 
 EXPOSE 80
 

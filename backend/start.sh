@@ -25,5 +25,8 @@ if [ "${ENABLE_AUTO_INGEST:-0}" = "1" ]; then
   fi
 fi
 
+echo "[start.sh] Ensuring product catalog..."
+python -m backend.seed_from_mapping || echo "[start.sh] catalog seed failed; continuing."
+
 echo "[start.sh] Launching uvicorn..."
 exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info

@@ -68,7 +68,7 @@ const TryOnModal: React.FC<TryOnModalProps> = ({ isOpen, onClose, productImage, 
         setIsSendingRequest(true);
         setError(null);
         try {
-            const result = await requestTryOnAccess(effectiveSessionId);
+            await requestTryOnAccess(effectiveSessionId);
             setGateState('pending');
         } catch (err: any) {
             setError(err?.response?.data?.detail || 'Failed to send request. Try again.');

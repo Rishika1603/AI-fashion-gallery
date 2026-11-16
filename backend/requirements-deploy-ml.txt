@@ -1,0 +1,19 @@
+# Optional ML extras for the deploy image: the CLIP stack behind
+# "search by photo" (backend/embeddings.py).
+#
+# Enable with a Railway build variable:  INSTALL_ML=1
+#
+# Requirements: a plan with >= 2 GB RAM and >= 5 GB disk per service
+# (Railway Hobby and above). On Free/Trial the CLIP model alone (~600 MB of
+# weights, ~1.5 GB RSS at inference) does not fit, and /api/search-by-photo
+# answers 503 instead.
+
+-r requirements-deploy.txt
+
+# CPU-only torch wheels. The +cpu local version is what makes pip prefer this
+# index over the CUDA-enabled wheels on PyPI.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch~=2.10.0
+transformers~=5.1.0
+numpy~=2.3.5
