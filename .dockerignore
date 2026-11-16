@@ -33,6 +33,7 @@ tryon_uploads
 tryon_results
 *.sqlite
 *.sqlite3
+*.db
 *.log
 
 # Datasets (Railway expects a volume mount for these; never bundle)

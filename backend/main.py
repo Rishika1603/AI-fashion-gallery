@@ -57,9 +57,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # CORS
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173")
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+# Railway hands out randomised domain names per service and environment, so
+# the frontend origin changes whenever a service is recreated. Allow any
+# Railway-hosted origin in addition to the explicitly configured ones.
+RAILWAY_ORIGIN_REGEX = r"^https://[A-Za-z0-9-]+\.up\.railway\.app$"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=RAILWAY_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

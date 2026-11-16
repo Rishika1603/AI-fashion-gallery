@@ -9,6 +9,7 @@ slowapi~=0.1.9
 
 # Database / ORM (kept for possible future use)
 sqlalchemy~=2.0.43
+psycopg2-binary~=2.9.10
 
 # ML / Embeddings
 torch~=2.10.0
